@@ -93,7 +93,13 @@ Extra Tilt flags go after another `--`, e.g. `moon ext tilt -- up web -- --legac
 | `inputs`, `outputs`, `.gitignore` | `deps` and `ignore`, matching exactly what moon hashes. See below. |
 | project ID | `labels` (groups resources in the UI) |
 
-Every resource runs `moon run <target> --upstream none`. moon still handles caching, toolchains, and environment, while Tilt owns ordering. Interactive tasks, and tasks that run Tilt itself, are never exposed.
+Every resource runs `moon run <target> --upstream none`. moon still handles caching, toolchains, and environment, while Tilt owns ordering. Interactive tasks, and tasks that run Tilt itself, are never exposed, even when tagged. Neither are tasks that depend on one, directly or through other such tasks: a `tilt-open` task that runs after `tilt-up` is meant to follow Tilt from moon, and as a resource it would start before Tilt is up (Tilt ignores `resource_deps` on resources that don't exist). The generated file lists the ones it left out, with the dependency that caused it:
+
+```python
+# Not exposed: these tasks depend on a task that runs Tilt (directly, or
+# through another task listed here), so in Tilt they would start before it.
+#   web:tilt-open (depends on web:tilt-up)
+```
 
 ### Service dependencies from the project graph
 
@@ -438,6 +444,7 @@ _MOON_GITIGNORE = {{ gitignore | moon_path }}
 | `gitignore_exceptions` | `!` patterns re-including gitignored paths that must stay watched. |
 | `images` | Images: `project`, `image_ref`, `dockerfile`, `command`, `watch`, `ignore`, `live_update` (`fall_back_on`, `syncs` with `local`/`remote`, `restart_entrypoint`, or none). |
 | `workloads` | Declared workloads: `name`, `kind` (`k8s` or `compose`), `project`, `labels` (empty with `workloadLabels: "none"`), `resource_deps`. |
+| `excluded` | Tasks left out because they depend on a task that runs Tilt, and would otherwise have been resources: `target`, `dependency`. |
 | `restart_process` | Whether any image restarts after syncing (loads Tilt's `restart_process` extension). |
 | `config_files` | Files the generated file is derived from (watched by `(moon)`). |
 | `regenerate_cmd` | Command `(moon)` runs. |

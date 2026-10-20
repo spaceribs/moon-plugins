@@ -57,6 +57,15 @@ pub fn plan_resources(
     plan(projects, tasks, config, &BTreeMap::new()).resources
 }
 
+/// Everything the generated file is rendered from.
+#[derive(Debug, Default)]
+pub struct Planned {
+    pub resources: Vec<Resource>,
+    pub images: Vec<crate::images::Image>,
+    pub workloads: Vec<DecoratedWorkload>,
+    pub excluded: Vec<ExcludedTask>,
+}
+
 /// Plan local resources, container images, and workload decorations together.
 /// Projects with workloads (declared in `project.tilt.workloads`) are
 /// containerized: their services don't run on the host, and their workloads
@@ -66,11 +75,7 @@ pub fn plan_with_images(
     tasks: &QueryTasksOutput,
     config: &TiltExtensionConfig,
     config_files: &[String],
-) -> (
-    Vec<Resource>,
-    Vec<crate::images::Image>,
-    Vec<DecoratedWorkload>,
-) {
+) -> Planned {
     let mut images = crate::images::plan_images(projects, tasks, config, config_files);
     let containerized: BTreeMap<String, DeclaredWorkloads> = projects
         .projects
@@ -97,7 +102,12 @@ pub fn plan_with_images(
 
     let workloads = decorate_workloads(projects, &plan.workload_deps, config.workload_labels);
 
-    (plan.resources, images, workloads)
+    Planned {
+        resources: plan.resources,
+        images,
+        workloads,
+        excluded: plan.excluded,
+    }
 }
 
 /// Resources, plus `resource_deps` for containerized projects' workloads.
@@ -107,17 +117,108 @@ pub struct Plan {
     /// Containerized project ID -> upstream resources that each of its
     /// workloads waits on, from the project graph.
     pub workload_deps: BTreeMap<String, Vec<String>>,
+    /// Tasks left out because they depend on a task that runs Tilt, which
+    /// would otherwise have been resources.
+    pub excluded: Vec<ExcludedTask>,
+}
+
+/// A task left out because it depends on a task that runs Tilt. Serialized
+/// as-is into the template context (`excluded`).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ExcludedTask {
+    pub target: String,
+    /// The dependency that runs Tilt, or that was itself excluded for it.
+    pub dependency: String,
 }
 
 /// Like [`plan_resources`], where `containerized` projects run as the workloads
 /// they declare: their workloads stand in as their services in the project
 /// graph, and their tasks aren't local resources, except non-persistent tasks
 /// that carry the tag themselves (build steps) and those tasks' dependencies.
+///
+/// Tasks that follow a task running Tilt are never resources. Those that would
+/// otherwise have been (by planning without excluding them) are listed in
+/// [`Plan::excluded`].
 pub fn plan(
     projects: &QueryProjectsOutput,
     tasks: &QueryTasksOutput,
     config: &TiltExtensionConfig,
     containerized: &BTreeMap<String, DeclaredWorkloads>,
+) -> Plan {
+    let follows_tilt = tasks_following_tilt(tasks);
+    let mut plan = plan_excluding(projects, tasks, config, containerized, &follows_tilt);
+
+    if !follows_tilt.is_empty() {
+        let unexcluded = plan_excluding(projects, tasks, config, containerized, &BTreeMap::new());
+        let mut excluded: Vec<ExcludedTask> = unexcluded
+            .resources
+            .iter()
+            .filter_map(|resource| {
+                let target = format!("{}:{}", resource.project, resource.task);
+                let dependency = follows_tilt.get(target.as_str())?;
+
+                Some(ExcludedTask {
+                    dependency: dependency.to_string(),
+                    target,
+                })
+            })
+            .collect();
+
+        excluded.sort_by(|a, b| a.target.cmp(&b.target));
+        excluded.dedup();
+        plan.excluded = excluded;
+    }
+
+    plan
+}
+
+/// Tasks that depend on a task that runs Tilt, directly or through other such
+/// tasks, mapped to that dependency. They run after Tilt is up (e.g. opening
+/// its UI), so as resources inside Tilt they would start out of order: Tilt
+/// silently drops `resource_deps` on resources that don't exist.
+fn tasks_following_tilt(tasks: &QueryTasksOutput) -> BTreeMap<&str, &str> {
+    let all: BTreeMap<&str, &QueryTask> = tasks
+        .tasks
+        .values()
+        .flat_map(|project_tasks| project_tasks.values())
+        .map(|task| (task.target.as_str(), task))
+        .collect();
+    let mut follows: BTreeMap<&str, &str> = BTreeMap::new();
+
+    // Repeat until no task is added, so chains of any length are covered.
+    loop {
+        let before = follows.len();
+
+        for (target, task) in &all {
+            if runs_tilt(task) || follows.contains_key(target) {
+                continue;
+            }
+
+            let cause = task.deps.iter().find(|dep| {
+                follows.contains_key(dep.target.as_str())
+                    || all
+                        .get(dep.target.as_str())
+                        .is_some_and(|dep| runs_tilt(dep))
+            });
+
+            if let Some(dep) = cause {
+                follows.insert(target, dep.target.as_str());
+            }
+        }
+
+        if follows.len() == before {
+            return follows;
+        }
+    }
+}
+
+/// [`plan`], leaving out the tasks in `excluded` entirely.
+fn plan_excluding(
+    projects: &QueryProjectsOutput,
+    tasks: &QueryTasksOutput,
+    config: &TiltExtensionConfig,
+    containerized: &BTreeMap<String, DeclaredWorkloads>,
+    excluded: &BTreeMap<&str, &str>,
 ) -> Plan {
     let tagged_projects: BTreeSet<&str> = projects
         .projects
@@ -157,6 +258,11 @@ pub fn plan(
         for task in project_tasks.values() {
             // The workload runs the project; its services don't run on the host.
             if is_containerized && task.options.persistent {
+                continue;
+            }
+
+            // Not even a dependency: no resource may wait on it.
+            if excluded.contains_key(task.target.as_str()) {
                 continue;
             }
 
@@ -364,6 +470,7 @@ pub fn plan(
     Plan {
         resources,
         workload_deps,
+        excluded: vec![],
     }
 }
 
@@ -540,6 +647,8 @@ pub struct RenderInput<'a> {
     pub images: &'a [crate::images::Image],
     /// Workloads deployed by project Tiltfiles, to decorate.
     pub workloads: &'a [DecoratedWorkload],
+    /// Tasks left out because they follow a task that runs Tilt.
+    pub excluded: &'a [ExcludedTask],
     pub version: &'a str,
     pub custom_template: Option<&'a str>,
 }
@@ -559,6 +668,7 @@ impl<'a> RenderInput<'a> {
             extension_id: "tilt",
             images: &[],
             workloads: &[],
+            excluded: &[],
             version,
             custom_template: None,
         }
@@ -693,6 +803,7 @@ pub fn render(input: &RenderInput, config: &TiltExtensionConfig) -> Result<Strin
             projects,
             images: input.images,
             workloads: input.workloads,
+            excluded: input.excluded,
             restart_process: input.images.iter().any(|image| {
                 image
                     .live_update
@@ -1046,6 +1157,223 @@ mod tests {
         );
     }
 
+    /// Add a task to the fixture: `command` `tilt` runs Tilt.
+    fn add_task(
+        tasks: &mut QueryTasksOutput,
+        target: &str,
+        command: &str,
+        persistent: bool,
+        deps: &[&str],
+        tags: &[&str],
+    ) {
+        let (project, id) = target.split_once(':').unwrap();
+
+        tasks.tasks.entry(project.into()).or_default().insert(
+            id.into(),
+            QueryTask {
+                target: target.into(),
+                command: command.into(),
+                deps: deps
+                    .iter()
+                    .map(|dep| crate::query::QueryTaskDep {
+                        target: dep.to_string(),
+                        ..Default::default()
+                    })
+                    .collect(),
+                options: crate::query::QueryTaskOptions {
+                    persistent,
+                    ..Default::default()
+                },
+                tags: tags.iter().map(|tag| tag.to_string()).collect(),
+                ..Default::default()
+            },
+        );
+    }
+
+    fn excluded(plan: &Plan) -> Vec<(&str, &str)> {
+        plan.excluded
+            .iter()
+            .map(|task| (task.target.as_str(), task.dependency.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn excludes_tasks_that_follow_a_tilt_task() {
+        let (projects, mut tasks) = fixture();
+        add_task(&mut tasks, "web:tilt-up", "tilt", true, &[], &[]);
+        add_task(
+            &mut tasks,
+            "web:tilt-open",
+            "open",
+            true,
+            &["web:tilt-up"],
+            &[],
+        );
+
+        let plan = plan(
+            &projects,
+            &tasks,
+            &TiltExtensionConfig::default(),
+            &BTreeMap::new(),
+        );
+        let resources = targets(&plan.resources);
+
+        // web is tagged, so tilt-open (persistent) would have been a resource.
+        assert!(!resources.contains(&"web:tilt-up"));
+        assert!(!resources.contains(&"web:tilt-open"));
+        assert_eq!(excluded(&plan), [("web:tilt-open", "web:tilt-up")]);
+        // The rest of the project is unaffected, and nothing waits on them.
+        assert!(resources.contains(&"web:dev"));
+        assert!(plan.resources.iter().all(|resource| {
+            !resource
+                .resource_deps
+                .iter()
+                .any(|dep| dep.starts_with("web:tilt-"))
+        }));
+    }
+
+    #[test]
+    fn excludes_tagged_tasks_that_follow_a_tilt_task() {
+        let (projects, mut tasks) = fixture();
+        add_task(&mut tasks, "api:tilt-up", "tilt", true, &[], &[]);
+        add_task(
+            &mut tasks,
+            "api:open-ui",
+            "open",
+            false,
+            &["api:tilt-up"],
+            &["tilt"],
+        );
+
+        let plan = plan(
+            &projects,
+            &tasks,
+            &TiltExtensionConfig::default(),
+            &BTreeMap::new(),
+        );
+
+        assert!(!targets(&plan.resources).contains(&"api:open-ui"));
+        assert_eq!(excluded(&plan), [("api:open-ui", "api:tilt-up")]);
+        assert!(targets(&plan.resources).contains(&"api:serve"));
+    }
+
+    #[test]
+    fn excludes_chains_of_tasks_after_a_tilt_task() {
+        let (projects, mut tasks) = fixture();
+        add_task(&mut tasks, "web:tilt-up", "tilt", true, &[], &[]);
+        add_task(
+            &mut tasks,
+            "web:tilt-open",
+            "open",
+            true,
+            &["web:tilt-up"],
+            &[],
+        );
+        add_task(
+            &mut tasks,
+            "web:notify",
+            "notify",
+            true,
+            &["web:tilt-open"],
+            &[],
+        );
+
+        let plan = plan(
+            &projects,
+            &tasks,
+            &TiltExtensionConfig::default(),
+            &BTreeMap::new(),
+        );
+
+        assert!(!targets(&plan.resources).contains(&"web:notify"));
+        assert_eq!(
+            excluded(&plan),
+            [
+                ("web:notify", "web:tilt-open"),
+                ("web:tilt-open", "web:tilt-up")
+            ]
+        );
+    }
+
+    #[test]
+    fn lists_only_exclusions_that_would_have_been_resources() {
+        let (projects, mut tasks) = fixture();
+        // docs isn't tagged, so nothing selects these anyway.
+        add_task(&mut tasks, "docs:tilt-up", "tilt", true, &[], &[]);
+        add_task(
+            &mut tasks,
+            "docs:tilt-open",
+            "open",
+            true,
+            &["docs:tilt-up"],
+            &[],
+        );
+
+        let plan = plan(
+            &projects,
+            &tasks,
+            &TiltExtensionConfig::default(),
+            &BTreeMap::new(),
+        );
+
+        assert!(plan.excluded.is_empty());
+
+        // With every persistent task selected, it would have been one.
+        let config = TiltExtensionConfig {
+            include_persistent: true,
+            ..Default::default()
+        };
+        let plan = super::plan(&projects, &tasks, &config, &BTreeMap::new());
+
+        assert_eq!(excluded(&plan), [("docs:tilt-open", "docs:tilt-up")]);
+        assert!(!targets(&plan.resources).contains(&"docs:tilt-open"));
+    }
+
+    #[test]
+    fn renders_excluded_tasks_as_a_comment() {
+        let (projects, mut tasks) = fixture();
+        let config = TiltExtensionConfig::default();
+        let render_planned = |tasks: &QueryTasksOutput| {
+            let planned = plan_with_images(&projects, tasks, &config, &[]);
+
+            render(
+                &RenderInput {
+                    excluded: &planned.excluded,
+                    ..RenderInput::new(&planned.resources, &projects, "0.0.0")
+                },
+                &config,
+            )
+            .unwrap()
+        };
+
+        assert!(!render_planned(&tasks).contains("Not exposed"));
+
+        add_task(&mut tasks, "web:tilt-up", "tilt", true, &[], &[]);
+        add_task(
+            &mut tasks,
+            "web:tilt-open",
+            "open",
+            true,
+            &["web:tilt-up"],
+            &[],
+        );
+        add_task(
+            &mut tasks,
+            "web:notify",
+            "notify",
+            true,
+            &["web:tilt-open"],
+            &[],
+        );
+
+        let output = render_planned(&tasks);
+
+        assert!(output.contains(
+            "\n# Not exposed: these tasks depend on a task that runs Tilt (directly, or\n# through another task listed here), so in Tilt they would start before it.\n#   web:notify (depends on web:tilt-open)\n#   web:tilt-open (depends on web:tilt-up)\n"
+        ));
+        assert!(!output.contains("local_resource(\n    \"web:tilt-open\""));
+    }
+
     #[test]
     fn renders_project_selection_for_tilt_args() {
         let (mut projects, tasks) = fixture();
@@ -1098,7 +1426,9 @@ mod tests {
         });
 
         let config = TiltExtensionConfig::default();
-        let (resources, images, _) = plan_with_images(&projects, &tasks, &config, &[]);
+        let Planned {
+            resources, images, ..
+        } = plan_with_images(&projects, &tasks, &config, &[]);
         let output = render(
             &RenderInput {
                 images: &images,
@@ -1261,7 +1591,12 @@ _MOON_GITIGNORE = {{ gitignore | moon_path }}
         });
 
         let config = TiltExtensionConfig::default();
-        let (resources, images, workloads) = plan_with_images(&projects, &tasks, &config, &[]);
+        let Planned {
+            resources,
+            images,
+            workloads,
+            ..
+        } = plan_with_images(&projects, &tasks, &config, &[]);
         let live_update = images[0].live_update.as_ref().unwrap();
 
         assert_eq!(live_update.restart_entrypoint, None);
@@ -1295,7 +1630,7 @@ _MOON_GITIGNORE = {{ gitignore | moon_path }}
             .unwrap(),
         });
 
-        let (_, images, _) = plan_with_images(&projects, &tasks, &config, &[]);
+        let images = plan_with_images(&projects, &tasks, &config, &[]).images;
         let live_update = images[0].live_update.as_ref().unwrap();
 
         assert!(live_update.restart_entrypoint.is_some());
@@ -1316,7 +1651,12 @@ _MOON_GITIGNORE = {{ gitignore | moon_path }}
         });
 
         let config = TiltExtensionConfig::default();
-        let (resources, images, workloads) = plan_with_images(&projects, &tasks, &config, &[]);
+        let Planned {
+            resources,
+            images,
+            workloads,
+            ..
+        } = plan_with_images(&projects, &tasks, &config, &[]);
         let output = render(
             &RenderInput {
                 images: &images,
@@ -1420,7 +1760,12 @@ _MOON_GITIGNORE = {{ gitignore | moon_path }}
             .unwrap(),
         });
 
-        let (resources, images, workloads) = plan_with_images(&projects, &tasks, config, &[]);
+        let Planned {
+            resources,
+            images,
+            workloads,
+            ..
+        } = plan_with_images(&projects, &tasks, config, &[]);
 
         render(
             &RenderInput {

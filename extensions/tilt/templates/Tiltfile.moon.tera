@@ -78,6 +78,14 @@ local_resource(
 {{ moon::resource(resource=resource) }}
 {%- endfor %}
 {%- endif %}
+{%- if excluded %}
+
+# Not exposed: these tasks depend on a task that runs Tilt (directly, or
+# through another task listed here), so in Tilt they would start before it.
+{%- for task in excluded %}
+#   {{ task.target }} (depends on {{ task.dependency }})
+{%- endfor %}
+{%- endif %}
 {%- endblock resources %}
 {%- block images -%}
 {%- if images %}

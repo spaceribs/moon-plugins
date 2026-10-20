@@ -53,6 +53,9 @@ pub struct TemplateContext<'a> {
     /// Workloads deployed by project Tiltfiles (`project.tilt.workloads`),
     /// decorated with labels and `resource_deps`.
     pub workloads: &'a [crate::workloads::DecoratedWorkload],
+    /// Tasks left out because they depend on a task that runs Tilt, and would
+    /// otherwise have been resources: `target`, `dependency`.
+    pub excluded: &'a [crate::tiltfile::ExcludedTask],
     /// Whether any image restarts its process after a Live Update sync, so
     /// Tilt's `restart_process` extension must be loaded.
     pub restart_process: bool,
