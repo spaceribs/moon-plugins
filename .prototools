@@ -1,1 +1,8 @@
 moon = "2.6.2"
+
+# OpenSpec (spec-driven development), installed through proto's npm backend
+# (proto 0.57+), so the same `openspec` is on PATH for you, AI assistants'
+# /opsx:* commands, moon tasks, and CI.
+node = "22.22.1"
+npm = "10.9.4"
+"npm:@fission-ai/openspec" = "1.14.3"

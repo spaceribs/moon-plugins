@@ -1,0 +1,44 @@
+schema: spec-driven
+
+context: |
+  Plugins run as WASM (wasm32-wasip1) inside moon/proto: only virtual paths
+  (/workspace, /userhome, /proto, /moon) are visible, and host-function errors
+  (exec of a missing command, loading an unconfigured toolchain's config) abort
+  the call uncatchably, so guard them before calling.
+  Verify behavior against real moon and Tilt, not only unit tests: several
+  documented behaviors differed in practice.
+  Supported platforms: Linux and macOS. Compatibility: moon 2.6+, Tilt 0.37+.
+  Commits follow Conventional Commits: they drive release-plz versions and
+  changelogs, so a change's commits must use the right type and scope.
+  New behavior that could surprise existing users must be opt-in.
+
+# Project context (optional)
+# Add only constraints that should guide OpenSpec artifacts and workflows.
+# Include constraints an agent cannot infer by reading the code.
+# Keep general project documentation and discoverable codebase facts out.
+# Example:
+#   context: |
+#     Designs and tasks must cover Windows, macOS, and Linux
+#     Write all artifacts in Spanish
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always state what is out of scope
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+# Example:
+#   operations:
+#     apply:
+#       guidance:
+#         - Keep test summaries concise
+#     archive:
+#       guidance:
+#         - Summarize the archive outcome before finishing

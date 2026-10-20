@@ -65,6 +65,32 @@ tilt:
 2. Register it in `.moon/workspace.yml`. Cargo picks it up automatically through the workspace globs.
 3. Add a `CHANGELOG.md` with a `# Changelog` heading. release-plz adds a section for each release.
 
+## Spec-driven development (OpenSpec)
+
+Changes are planned with [OpenSpec](https://github.com/Fission-AI/OpenSpec) before they're built. Specs for the plugins' behavior live in [`openspec/specs/`](./openspec/specs), and proposed changes in [`openspec/changes/`](./openspec/changes).
+
+OpenSpec is pinned in `.prototools` and installed by `proto install`, through proto's npm backend (needs proto 0.57+, so run `proto upgrade` first if needed). That puts `openspec` on `PATH` for you, for AI assistants, and for moon.
+
+With Claude Code (instructions in [`.claude/`](./.claude)):
+
+| Command | What it does |
+| --- | --- |
+| `/opsx:explore` | think an idea through before committing to it |
+| `/opsx:propose <idea>` | create a change: proposal, spec deltas, design, and tasks (planning only) |
+| `/opsx:apply` | implement the change's tasks |
+| `/opsx:archive` | merge the change's spec deltas into `openspec/specs/` and archive it |
+
+With moon:
+
+```sh
+moon run root:openspec          # validate all specs and changes (strict), also run in CI
+moon run root:openspec-update   # regenerate .claude/ instructions after upgrading OpenSpec
+openspec list                   # changes in progress (or --specs)
+openspec view                   # interactive dashboard
+```
+
+Project-wide guidance for AI-written artifacts is in [`openspec/config.yaml`](./openspec/config.yaml). To upgrade OpenSpec, bump its version in `.prototools`, then run `proto install` and `moon run root:openspec-update`. OpenSpec collects anonymous usage telemetry outside CI; opt out with `openspec config set telemetry.enabled false`.
+
 ## Commit messages
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org), because they decide each plugin's next version and changelog:

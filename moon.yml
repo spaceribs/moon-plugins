@@ -14,3 +14,15 @@ tasks:
   format-write:
     command: "cargo fmt --all"
     preset: "utility"
+
+  # OpenSpec: validate specs and change proposals (see openspec/).
+  openspec:
+    command: "openspec validate --all --strict --no-interactive"
+    inputs:
+      - "openspec/**/*"
+
+  # Regenerate OpenSpec's AI instruction files (.claude/) after upgrading it
+  # in .prototools.
+  openspec-update:
+    command: "openspec update"
+    preset: "utility"
