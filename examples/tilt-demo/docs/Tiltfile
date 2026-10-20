@@ -1,0 +1,3 @@
+# A project-local Tiltfile, include()d by the generated Tiltfile.moon. Its `docs`
+# resource is selected by name (`moon ext tilt -- up docs`).
+local_resource("docs", serve_cmd = "echo docs && sleep 3600")

@@ -1,0 +1,17 @@
+$schema: "./cache/schemas/workspace.json"
+
+projects:
+  root: "."
+  # Extensions (moon)
+  tilt-extension: "extensions/tilt"
+  # Toolchains (moon)
+  tilt-toolchain: "toolchains/tilt"
+  # Tools (proto)
+  tilt-tool: "tools/tilt"
+
+vcs:
+  client: "git"
+  defaultBranch: "main"
+
+pipeline:
+  logRunningCommand: true

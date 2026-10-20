@@ -1,0 +1,6 @@
+/target
+/builds
+.moon/cache
+.moon/docker
+*.wasm
+!tests/__fixtures__/**/*.wasm

@@ -1,0 +1,34 @@
+# Tagged: every persistent task in this project becomes a Tilt resource.
+tags: ["tilt"]
+
+# web -> api-client -> api -> db. The extension links web:dev to api:serve
+# (through the library), and api:serve to db:serve.
+dependsOn:
+  - "api-client"
+  # Build-scoped dependencies aren't runtime services, so they're not linked.
+  - id: "tooling"
+    scope: "build"
+
+tasks:
+  # Node's built-in watch mode reloads the server itself (like webpack/vite),
+  # so Tilt doesn't restart it on source edits; only when codegen re-runs.
+  dev:
+    command: "node --watch src/server.mjs"
+    preset: "server"
+    deps: ["codegen"]
+    inputs: ["src/**/*", "package.json"]
+
+  codegen:
+    command: "node -e \"require('fs').mkdirSync('generated',{recursive:true});require('fs').copyFileSync('schema.json','generated/routes.json')\""
+    inputs: ["schema.json"]
+    outputs: ["generated/**/*"]
+
+  lint:
+    command: "echo lint"
+
+  # Interactive tasks need a TTY, so they're never exposed to Tilt, even when tagged.
+  repl:
+    command: "node"
+    tags: ["tilt"]
+    options:
+      interactive: true

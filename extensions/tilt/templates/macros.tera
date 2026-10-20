@@ -1,0 +1,38 @@
+{#- Macros for rendering moon resources. Import from custom templates with:
+    {% import "moon/macros.tera" as moon %} -#}
+
+{%- macro resource(resource) -%}
+{%- if resource.env %}
+{%- set extra_env = resource.env | starlark %}
+{%- set env = "dict(list(_MOON_ENV.items()) + list(" ~ extra_env ~ ".items()))" %}
+{%- else %}
+{%- set env = "_MOON_ENV" %}
+{%- endif -%}
+local_resource(
+    {{ resource.target | starlark }},
+{%- if resource.persistent %}
+    serve_cmd = {{ resource.cmd | starlark }},
+    serve_dir = _MOON_ROOT,
+    serve_env = {{ env }},
+{%- else %}
+    cmd = {{ resource.cmd | starlark }},
+    dir = _MOON_ROOT,
+    env = {{ env }},
+    allow_parallel = True,
+{%- endif %}
+{%- if resource.watch %}
+    deps = {{ resource.watch | moon_path }},
+{%- set ignore = [] %}
+{%- if resource.only_inputs %}{% set ignore = ignore | concat(with=resource.only_inputs | moon_path) %}{% endif %}
+{%- if resource.respect_gitignore %}{% set ignore = ignore | concat(with="_MOON_GITIGNORE") %}{% endif %}
+{%- if resource.ignore %}{% set ignore = ignore | concat(with=resource.ignore | moon_path) %}{% endif %}
+{%- if ignore %}
+    ignore = {{ ignore | join(sep=" + ") }},
+{%- endif %}
+{%- endif %}
+{%- if resource.resource_deps %}
+    resource_deps = {{ resource.resource_deps | starlark }},
+{%- endif %}
+    labels = {{ resource.labels | starlark }},
+)
+{%- endmacro resource %}

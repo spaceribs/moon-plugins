@@ -1,0 +1,1096 @@
+{
+  "projects": [
+    {
+      "config": {
+        "$schema": "",
+        "dependsOn": [
+          "db"
+        ],
+        "docker": {
+          "file": {},
+          "scaffold": {}
+        },
+        "language": "unknown",
+        "layer": "unknown",
+        "owners": {
+          "paths": []
+        },
+        "stack": "unknown",
+        "tasks": {
+          "build": {
+            "command": "echo building api",
+            "args": null,
+            "globalInputs": [],
+            "inputs": [
+              {
+                "glob": "src/**/*",
+                "cache": true
+              }
+            ],
+            "options": {
+              "runInSyncPhase": null
+            }
+          },
+          "serve": {
+            "command": "node src/server.mjs",
+            "args": null,
+            "deps": [
+              "~:build"
+            ],
+            "globalInputs": [],
+            "options": {
+              "runInSyncPhase": null
+            },
+            "preset": "server",
+            "tags": [
+              "tilt"
+            ]
+          }
+        },
+        "toolchains": {
+          "plugins": {}
+        },
+        "workspace": {
+          "inheritedTasks": {},
+          "mergeStrategies": {}
+        }
+      },
+      "dependencies": [
+        {
+          "id": "db",
+          "scope": "production",
+          "source": "explicit"
+        }
+      ],
+      "id": "api",
+      "inherited": {
+        "configs": {},
+        "layers": {}
+      },
+      "language": "unknown",
+      "layer": "unknown",
+      "root": "/workspace/api",
+      "source": "api",
+      "stack": "unknown",
+      "tasks": {
+        "build": {
+          "command": "echo",
+          "args": [
+            "building",
+            "api"
+          ],
+          "id": "build",
+          "inputs": [
+            {
+              "glob": "src/**/*",
+              "cache": true
+            },
+            {
+              "glob": "/.moon/*.{yml,yaml,jsonc,json,pkl,hcl,toml}",
+              "cache": true
+            }
+          ],
+          "inputGlobs": {
+            ".moon/*.{yml,yaml,jsonc,json,pkl,hcl,toml}": {
+              "cache": true
+            },
+            "api/src/**/*": {
+              "cache": true
+            }
+          },
+          "options": {
+            "allowFailure": false,
+            "cache": true,
+            "envOverride": false,
+            "expectFailure": false,
+            "inferInputs": false,
+            "internal": false,
+            "interactive": false,
+            "mergeArgs": "append",
+            "mergeChecks": "append",
+            "mergeDeps": "append",
+            "mergeEnv": "append",
+            "mergeInputs": "append",
+            "mergeOutputs": "append",
+            "mergeTags": "append",
+            "mergeToolchains": "append",
+            "persistent": false,
+            "priority": "normal",
+            "retryCount": 0,
+            "runDepsInParallel": true,
+            "runInCI": true,
+            "runInSyncPhase": false,
+            "runFromWorkspaceRoot": false,
+            "shell": true,
+            "unixShell": "bash",
+            "windowsShell": "powershell"
+          },
+          "state": {
+            "expanded": true
+          },
+          "target": "api:build",
+          "toolchains": [
+            "system"
+          ],
+          "type": "test"
+        },
+        "serve": {
+          "command": "node",
+          "args": [
+            "src/server.mjs"
+          ],
+          "deps": [
+            {
+              "args": [],
+              "env": {},
+              "target": "api:build",
+              "cacheStrategy": "ignored"
+            }
+          ],
+          "id": "serve",
+          "inputs": [
+            {
+              "glob": "**/*",
+              "cache": true
+            },
+            {
+              "glob": "/.moon/*.{yml,yaml,jsonc,json,pkl,hcl,toml}",
+              "cache": true
+            }
+          ],
+          "inputGlobs": {
+            "api/**/*": {
+              "cache": true
+            },
+            ".moon/*.{yml,yaml,jsonc,json,pkl,hcl,toml}": {
+              "cache": true
+            }
+          },
+          "options": {
+            "allowFailure": false,
+            "cache": false,
+            "envOverride": false,
+            "expectFailure": false,
+            "inferInputs": false,
+            "internal": false,
+            "interactive": false,
+            "mergeArgs": "append",
+            "mergeChecks": "append",
+            "mergeDeps": "append",
+            "mergeEnv": "append",
+            "mergeInputs": "append",
+            "mergeOutputs": "append",
+            "mergeTags": "append",
+            "mergeToolchains": "append",
+            "outputStyle": "stream",
+            "persistent": true,
+            "priority": "low",
+            "retryCount": 0,
+            "runDepsInParallel": true,
+            "runInCI": false,
+            "runInSyncPhase": false,
+            "runFromWorkspaceRoot": false,
+            "shell": true,
+            "unixShell": "bash",
+            "windowsShell": "powershell"
+          },
+          "preset": "server",
+          "state": {
+            "defaultInputs": true,
+            "expanded": true,
+            "setRunInCi": true
+          },
+          "tags": [
+            "tilt"
+          ],
+          "target": "api:serve",
+          "toolchains": [
+            "system"
+          ],
+          "type": "run"
+        }
+      },
+      "taskTargets": [
+        "api:build",
+        "api:serve"
+      ],
+      "toolchains": [
+        "system"
+      ]
+    },
+    {
+      "config": {
+        "$schema": "",
+        "dependsOn": [
+          "api"
+        ],
+        "docker": {
+          "file": {},
+          "scaffold": {}
+        },
+        "language": "unknown",
+        "layer": "unknown",
+        "owners": {
+          "paths": []
+        },
+        "stack": "unknown",
+        "tasks": {
+          "build": {
+            "command": "echo building api-client",
+            "args": null,
+            "globalInputs": [],
+            "options": {
+              "runInSyncPhase": null
+            }
+          }
+        },
+        "toolchains": {
+          "plugins": {}
+        },
+        "workspace": {
+          "inheritedTasks": {},
+          "mergeStrategies": {}
+        }
+      },
+      "dependencies": [
+        {
+          "id": "api",
+          "scope": "production",
+          "source": "explicit"
+        }
+      ],
+      "id": "api-client",
+      "inherited": {
+        "configs": {},
+        "layers": {}
+      },
+      "language": "unknown",
+      "layer": "unknown",
+      "root": "/workspace/api-client",
+      "source": "api-client",
+      "stack": "unknown",
+      "tasks": {
+        "build": {
+          "command": "echo",
+          "args": [
+            "building",
+            "api-client"
+          ],
+          "id": "build",
+          "inputs": [
+            {
+              "glob": "**/*",
+              "cache": true
+            },
+            {
+              "glob": "/.moon/*.{yml,yaml,jsonc,json,pkl,hcl,toml}",
+              "cache": true
+            }
+          ],
+          "inputGlobs": {
+            ".moon/*.{yml,yaml,jsonc,json,pkl,hcl,toml}": {
+              "cache": true
+            },
+            "api-client/**/*": {
+              "cache": true
+            }
+          },
+          "options": {
+            "allowFailure": false,
+            "cache": true,
+            "envOverride": false,
+            "expectFailure": false,
+            "inferInputs": false,
+            "internal": false,
+            "interactive": false,
+            "mergeArgs": "append",
+            "mergeChecks": "append",
+            "mergeDeps": "append",
+            "mergeEnv": "append",
+            "mergeInputs": "append",
+            "mergeOutputs": "append",
+            "mergeTags": "append",
+            "mergeToolchains": "append",
+            "persistent": false,
+            "priority": "normal",
+            "retryCount": 0,
+            "runDepsInParallel": true,
+            "runInCI": true,
+            "runInSyncPhase": false,
+            "runFromWorkspaceRoot": false,
+            "shell": true,
+            "unixShell": "bash",
+            "windowsShell": "powershell"
+          },
+          "state": {
+            "defaultInputs": true,
+            "expanded": true
+          },
+          "target": "api-client:build",
+          "toolchains": [
+            "system"
+          ],
+          "type": "test"
+        }
+      },
+      "taskTargets": [
+        "api-client:build"
+      ],
+      "toolchains": [
+        "system"
+      ]
+    },
+    {
+      "config": {
+        "$schema": "",
+        "docker": {
+          "file": {},
+          "scaffold": {}
+        },
+        "language": "unknown",
+        "layer": "unknown",
+        "owners": {
+          "paths": []
+        },
+        "stack": "unknown",
+        "tasks": {
+          "serve": {
+            "command": "node -e \"setInterval(() => {}, 1 << 30); console.log('db ready')\"",
+            "args": null,
+            "globalInputs": [],
+            "options": {
+              "runInSyncPhase": null
+            },
+            "preset": "server"
+          }
+        },
+        "toolchains": {
+          "plugins": {}
+        },
+        "workspace": {
+          "inheritedTasks": {},
+          "mergeStrategies": {}
+        }
+      },
+      "id": "db",
+      "inherited": {
+        "configs": {},
+        "layers": {}
+      },
+      "language": "unknown",
+      "layer": "unknown",
+      "root": "/workspace/db",
+      "source": "db",
+      "stack": "unknown",
+      "tasks": {
+        "serve": {
+          "command": "node",
+          "args": [
+            "-e",
+            "\"setInterval(() => {}, 1 << 30); console.log('db ready')\""
+          ],
+          "id": "serve",
+          "inputs": [
+            {
+              "glob": "**/*",
+              "cache": true
+            },
+            {
+              "glob": "/.moon/*.{yml,yaml,jsonc,json,pkl,hcl,toml}",
+              "cache": true
+            }
+          ],
+          "inputGlobs": {
+            ".moon/*.{yml,yaml,jsonc,json,pkl,hcl,toml}": {
+              "cache": true
+            },
+            "db/**/*": {
+              "cache": true
+            }
+          },
+          "options": {
+            "allowFailure": false,
+            "cache": false,
+            "envOverride": false,
+            "expectFailure": false,
+            "inferInputs": false,
+            "internal": false,
+            "interactive": false,
+            "mergeArgs": "append",
+            "mergeChecks": "append",
+            "mergeDeps": "append",
+            "mergeEnv": "append",
+            "mergeInputs": "append",
+            "mergeOutputs": "append",
+            "mergeTags": "append",
+            "mergeToolchains": "append",
+            "outputStyle": "stream",
+            "persistent": true,
+            "priority": "low",
+            "retryCount": 0,
+            "runDepsInParallel": true,
+            "runInCI": false,
+            "runInSyncPhase": false,
+            "runFromWorkspaceRoot": false,
+            "shell": true,
+            "unixShell": "bash",
+            "windowsShell": "powershell"
+          },
+          "preset": "server",
+          "state": {
+            "defaultInputs": true,
+            "expanded": true,
+            "setRunInCi": true
+          },
+          "target": "db:serve",
+          "toolchains": [
+            "system"
+          ],
+          "type": "run"
+        }
+      },
+      "taskTargets": [
+        "db:serve"
+      ],
+      "toolchains": [
+        "system"
+      ]
+    },
+    {
+      "config": {
+        "$schema": "",
+        "docker": {
+          "file": {},
+          "scaffold": {}
+        },
+        "language": "unknown",
+        "layer": "unknown",
+        "owners": {
+          "paths": []
+        },
+        "stack": "unknown",
+        "tasks": {
+          "serve": {
+            "command": "echo docs",
+            "args": null,
+            "globalInputs": [],
+            "options": {
+              "runInSyncPhase": null
+            },
+            "preset": "server"
+          }
+        },
+        "toolchains": {
+          "plugins": {}
+        },
+        "workspace": {
+          "inheritedTasks": {},
+          "mergeStrategies": {}
+        }
+      },
+      "id": "docs",
+      "inherited": {
+        "configs": {},
+        "layers": {}
+      },
+      "language": "unknown",
+      "layer": "unknown",
+      "root": "/workspace/docs",
+      "source": "docs",
+      "stack": "unknown",
+      "tasks": {
+        "serve": {
+          "command": "echo",
+          "args": [
+            "docs"
+          ],
+          "id": "serve",
+          "inputs": [
+            {
+              "glob": "**/*",
+              "cache": true
+            },
+            {
+              "glob": "/.moon/*.{yml,yaml,jsonc,json,pkl,hcl,toml}",
+              "cache": true
+            }
+          ],
+          "inputGlobs": {
+            "docs/**/*": {
+              "cache": true
+            },
+            ".moon/*.{yml,yaml,jsonc,json,pkl,hcl,toml}": {
+              "cache": true
+            }
+          },
+          "options": {
+            "allowFailure": false,
+            "cache": false,
+            "envOverride": false,
+            "expectFailure": false,
+            "inferInputs": false,
+            "internal": false,
+            "interactive": false,
+            "mergeArgs": "append",
+            "mergeChecks": "append",
+            "mergeDeps": "append",
+            "mergeEnv": "append",
+            "mergeInputs": "append",
+            "mergeOutputs": "append",
+            "mergeTags": "append",
+            "mergeToolchains": "append",
+            "outputStyle": "stream",
+            "persistent": true,
+            "priority": "low",
+            "retryCount": 0,
+            "runDepsInParallel": true,
+            "runInCI": false,
+            "runInSyncPhase": false,
+            "runFromWorkspaceRoot": false,
+            "shell": true,
+            "unixShell": "bash",
+            "windowsShell": "powershell"
+          },
+          "preset": "server",
+          "state": {
+            "defaultInputs": true,
+            "expanded": true,
+            "setRunInCi": true
+          },
+          "target": "docs:serve",
+          "toolchains": [
+            "system"
+          ],
+          "type": "run"
+        }
+      },
+      "taskTargets": [
+        "docs:serve"
+      ],
+      "toolchains": [
+        "system"
+      ]
+    },
+    {
+      "config": {
+        "$schema": "",
+        "docker": {
+          "file": {},
+          "scaffold": {}
+        },
+        "language": "unknown",
+        "layer": "unknown",
+        "owners": {
+          "paths": []
+        },
+        "stack": "unknown",
+        "tasks": {
+          "watch": {
+            "command": "node -e \"setInterval(() => {}, 1 << 30)\"",
+            "args": null,
+            "globalInputs": [],
+            "options": {
+              "runInSyncPhase": null
+            },
+            "preset": "server"
+          }
+        },
+        "toolchains": {
+          "plugins": {}
+        },
+        "workspace": {
+          "inheritedTasks": {},
+          "mergeStrategies": {}
+        }
+      },
+      "id": "tooling",
+      "inherited": {
+        "configs": {},
+        "layers": {}
+      },
+      "language": "unknown",
+      "layer": "unknown",
+      "root": "/workspace/tooling",
+      "source": "tooling",
+      "stack": "unknown",
+      "tasks": {
+        "watch": {
+          "command": "node",
+          "args": [
+            "-e",
+            "\"setInterval(() => {}, 1 << 30)\""
+          ],
+          "id": "watch",
+          "inputs": [
+            {
+              "glob": "**/*",
+              "cache": true
+            },
+            {
+              "glob": "/.moon/*.{yml,yaml,jsonc,json,pkl,hcl,toml}",
+              "cache": true
+            }
+          ],
+          "inputGlobs": {
+            ".moon/*.{yml,yaml,jsonc,json,pkl,hcl,toml}": {
+              "cache": true
+            },
+            "tooling/**/*": {
+              "cache": true
+            }
+          },
+          "options": {
+            "allowFailure": false,
+            "cache": false,
+            "envOverride": false,
+            "expectFailure": false,
+            "inferInputs": false,
+            "internal": false,
+            "interactive": false,
+            "mergeArgs": "append",
+            "mergeChecks": "append",
+            "mergeDeps": "append",
+            "mergeEnv": "append",
+            "mergeInputs": "append",
+            "mergeOutputs": "append",
+            "mergeTags": "append",
+            "mergeToolchains": "append",
+            "outputStyle": "stream",
+            "persistent": true,
+            "priority": "low",
+            "retryCount": 0,
+            "runDepsInParallel": true,
+            "runInCI": false,
+            "runInSyncPhase": false,
+            "runFromWorkspaceRoot": false,
+            "shell": true,
+            "unixShell": "bash",
+            "windowsShell": "powershell"
+          },
+          "preset": "server",
+          "state": {
+            "defaultInputs": true,
+            "expanded": true,
+            "setRunInCi": true
+          },
+          "target": "tooling:watch",
+          "toolchains": [
+            "system"
+          ],
+          "type": "run"
+        }
+      },
+      "taskTargets": [
+        "tooling:watch"
+      ],
+      "toolchains": [
+        "system"
+      ]
+    },
+    {
+      "config": {
+        "$schema": "",
+        "dependsOn": [
+          "api-client",
+          {
+            "id": "tooling",
+            "scope": "build",
+            "source": "explicit"
+          }
+        ],
+        "docker": {
+          "file": {},
+          "scaffold": {}
+        },
+        "language": "unknown",
+        "layer": "unknown",
+        "owners": {
+          "paths": []
+        },
+        "stack": "unknown",
+        "tags": [
+          "tilt"
+        ],
+        "tasks": {
+          "codegen": {
+            "command": "node -e \"require('fs').mkdirSync('generated',{recursive:true});require('fs').writeFileSync('generated/routes.json','[]')\"",
+            "args": null,
+            "globalInputs": [],
+            "outputs": [
+              {
+                "glob": "generated/**/*"
+              }
+            ],
+            "options": {
+              "runInSyncPhase": null
+            }
+          },
+          "dev": {
+            "command": "node src/server.mjs",
+            "args": null,
+            "deps": [
+              "~:codegen"
+            ],
+            "globalInputs": [],
+            "inputs": [
+              {
+                "glob": "src/**/*",
+                "cache": true
+              },
+              {
+                "file": "package.json"
+              }
+            ],
+            "options": {
+              "runInSyncPhase": null
+            },
+            "preset": "server"
+          },
+          "lint": {
+            "command": "echo lint",
+            "args": null,
+            "globalInputs": [],
+            "options": {
+              "runInSyncPhase": null
+            }
+          },
+          "repl": {
+            "command": "node",
+            "args": null,
+            "globalInputs": [],
+            "options": {
+              "interactive": true,
+              "runInSyncPhase": null
+            },
+            "tags": [
+              "tilt"
+            ]
+          }
+        },
+        "toolchains": {
+          "plugins": {}
+        },
+        "workspace": {
+          "inheritedTasks": {},
+          "mergeStrategies": {}
+        }
+      },
+      "dependencies": [
+        {
+          "id": "api-client",
+          "scope": "production",
+          "source": "explicit"
+        },
+        {
+          "id": "tooling",
+          "scope": "build",
+          "source": "explicit"
+        }
+      ],
+      "id": "web",
+      "inherited": {
+        "configs": {},
+        "layers": {}
+      },
+      "language": "unknown",
+      "layer": "unknown",
+      "root": "/workspace/web",
+      "source": "web",
+      "stack": "unknown",
+      "tasks": {
+        "codegen": {
+          "command": "node",
+          "args": [
+            "-e",
+            "\"require('fs').mkdirSync('generated',{recursive:true});require('fs').writeFileSync('generated/routes.json','[]')\""
+          ],
+          "id": "codegen",
+          "inputs": [
+            {
+              "glob": "**/*",
+              "cache": true
+            },
+            {
+              "glob": "/.moon/*.{yml,yaml,jsonc,json,pkl,hcl,toml}",
+              "cache": true
+            }
+          ],
+          "inputGlobs": {
+            "web/**/*": {
+              "cache": true
+            },
+            ".moon/*.{yml,yaml,jsonc,json,pkl,hcl,toml}": {
+              "cache": true
+            }
+          },
+          "options": {
+            "allowFailure": false,
+            "cache": true,
+            "envOverride": false,
+            "expectFailure": false,
+            "inferInputs": false,
+            "internal": false,
+            "interactive": false,
+            "mergeArgs": "append",
+            "mergeChecks": "append",
+            "mergeDeps": "append",
+            "mergeEnv": "append",
+            "mergeInputs": "append",
+            "mergeOutputs": "append",
+            "mergeTags": "append",
+            "mergeToolchains": "append",
+            "persistent": false,
+            "priority": "normal",
+            "retryCount": 0,
+            "runDepsInParallel": true,
+            "runInCI": true,
+            "runInSyncPhase": false,
+            "runFromWorkspaceRoot": false,
+            "shell": true,
+            "unixShell": "bash",
+            "windowsShell": "powershell"
+          },
+          "outputs": [
+            {
+              "glob": "generated/**/*"
+            }
+          ],
+          "outputGlobs": {
+            "web/generated/**/*": {}
+          },
+          "state": {
+            "defaultInputs": true,
+            "expanded": true
+          },
+          "target": "web:codegen",
+          "toolchains": [
+            "system"
+          ],
+          "type": "build"
+        },
+        "dev": {
+          "command": "node",
+          "args": [
+            "src/server.mjs"
+          ],
+          "deps": [
+            {
+              "args": [],
+              "env": {},
+              "target": "web:codegen",
+              "cacheStrategy": "hash"
+            }
+          ],
+          "id": "dev",
+          "inputs": [
+            {
+              "glob": "src/**/*",
+              "cache": true
+            },
+            {
+              "file": "package.json"
+            },
+            {
+              "glob": "/.moon/*.{yml,yaml,jsonc,json,pkl,hcl,toml}",
+              "cache": true
+            }
+          ],
+          "inputFiles": {
+            "web/package.json": {}
+          },
+          "inputGlobs": {
+            ".moon/*.{yml,yaml,jsonc,json,pkl,hcl,toml}": {
+              "cache": true
+            },
+            "web/src/**/*": {
+              "cache": true
+            }
+          },
+          "options": {
+            "allowFailure": false,
+            "cache": false,
+            "envOverride": false,
+            "expectFailure": false,
+            "inferInputs": false,
+            "internal": false,
+            "interactive": false,
+            "mergeArgs": "append",
+            "mergeChecks": "append",
+            "mergeDeps": "append",
+            "mergeEnv": "append",
+            "mergeInputs": "append",
+            "mergeOutputs": "append",
+            "mergeTags": "append",
+            "mergeToolchains": "append",
+            "outputStyle": "stream",
+            "persistent": true,
+            "priority": "low",
+            "retryCount": 0,
+            "runDepsInParallel": true,
+            "runInCI": false,
+            "runInSyncPhase": false,
+            "runFromWorkspaceRoot": false,
+            "shell": true,
+            "unixShell": "bash",
+            "windowsShell": "powershell"
+          },
+          "preset": "server",
+          "state": {
+            "expanded": true,
+            "setRunInCi": true
+          },
+          "target": "web:dev",
+          "toolchains": [
+            "system"
+          ],
+          "type": "run"
+        },
+        "lint": {
+          "command": "echo",
+          "args": [
+            "lint"
+          ],
+          "id": "lint",
+          "inputs": [
+            {
+              "glob": "**/*",
+              "cache": true
+            },
+            {
+              "glob": "/.moon/*.{yml,yaml,jsonc,json,pkl,hcl,toml}",
+              "cache": true
+            }
+          ],
+          "inputGlobs": {
+            "web/**/*": {
+              "cache": true
+            },
+            ".moon/*.{yml,yaml,jsonc,json,pkl,hcl,toml}": {
+              "cache": true
+            }
+          },
+          "options": {
+            "allowFailure": false,
+            "cache": true,
+            "envOverride": false,
+            "expectFailure": false,
+            "inferInputs": false,
+            "internal": false,
+            "interactive": false,
+            "mergeArgs": "append",
+            "mergeChecks": "append",
+            "mergeDeps": "append",
+            "mergeEnv": "append",
+            "mergeInputs": "append",
+            "mergeOutputs": "append",
+            "mergeTags": "append",
+            "mergeToolchains": "append",
+            "persistent": false,
+            "priority": "normal",
+            "retryCount": 0,
+            "runDepsInParallel": true,
+            "runInCI": true,
+            "runInSyncPhase": false,
+            "runFromWorkspaceRoot": false,
+            "shell": true,
+            "unixShell": "bash",
+            "windowsShell": "powershell"
+          },
+          "state": {
+            "defaultInputs": true,
+            "expanded": true
+          },
+          "target": "web:lint",
+          "toolchains": [
+            "system"
+          ],
+          "type": "test"
+        },
+        "repl": {
+          "command": "node",
+          "id": "repl",
+          "inputs": [
+            {
+              "glob": "**/*",
+              "cache": true
+            },
+            {
+              "glob": "/.moon/*.{yml,yaml,jsonc,json,pkl,hcl,toml}",
+              "cache": true
+            }
+          ],
+          "inputGlobs": {
+            "web/**/*": {
+              "cache": true
+            },
+            ".moon/*.{yml,yaml,jsonc,json,pkl,hcl,toml}": {
+              "cache": true
+            }
+          },
+          "options": {
+            "allowFailure": false,
+            "cache": true,
+            "envOverride": false,
+            "expectFailure": false,
+            "inferInputs": false,
+            "internal": false,
+            "interactive": true,
+            "mergeArgs": "append",
+            "mergeChecks": "append",
+            "mergeDeps": "append",
+            "mergeEnv": "append",
+            "mergeInputs": "append",
+            "mergeOutputs": "append",
+            "mergeTags": "append",
+            "mergeToolchains": "append",
+            "outputStyle": "stream",
+            "persistent": false,
+            "priority": "normal",
+            "retryCount": 0,
+            "runDepsInParallel": true,
+            "runInCI": false,
+            "runInSyncPhase": false,
+            "runFromWorkspaceRoot": false,
+            "shell": true,
+            "unixShell": "bash",
+            "windowsShell": "powershell"
+          },
+          "state": {
+            "defaultInputs": true,
+            "expanded": true,
+            "setRunInCi": true
+          },
+          "tags": [
+            "tilt"
+          ],
+          "target": "web:repl",
+          "toolchains": [
+            "system"
+          ],
+          "type": "test"
+        }
+      },
+      "taskTargets": [
+        "web:codegen",
+        "web:dev",
+        "web:lint",
+        "web:repl"
+      ],
+      "toolchains": [
+        "system"
+      ]
+    }
+  ],
+  "options": {
+    "affected": null,
+    "query": null,
+    "alias": null,
+    "id": null,
+    "language": null,
+    "layer": null,
+    "stack": null,
+    "source": null,
+    "tags": null,
+    "tasks": null
+  }
+}

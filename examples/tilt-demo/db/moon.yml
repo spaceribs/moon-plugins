@@ -1,0 +1,5 @@
+# Not tagged, but pulled into Tilt because api (a service) depends on it.
+tasks:
+  serve:
+    command: "node -e \"setInterval(() => {}, 1 << 30); console.log('db ready')\""
+    preset: "server"

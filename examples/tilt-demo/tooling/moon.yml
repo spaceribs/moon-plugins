@@ -1,0 +1,5 @@
+# A build-time dependency of web. Its watcher is not a runtime service.
+tasks:
+  watch:
+    command: "node -e \"setInterval(() => {}, 1 << 30)\""
+    preset: "server"

@@ -1,0 +1,9 @@
+$schema: "https://moonrepo.dev/schemas/extensions.json"
+
+tilt:
+  # Local build, for developing the plugin (`moon run tilt-extension:build` from
+  # the repo root). To use the published release instead:
+  #   plugin: "github://spaceribs/moon-plugins/tilt_extension"
+  plugin: "file://../../../target/wasm32-wasip1/release/tilt_extension.wasm"
+  tag: "tilt"
+  output: "Tiltfile.moon"

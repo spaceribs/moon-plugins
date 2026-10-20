@@ -1,0 +1,33 @@
+[package]
+name = "tilt_toolchain"
+version = "0.1.0"
+description = "Tilt (tilt.dev) toolchain WASM plugin for moon."
+authors = ["spaceribs"]
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[package.metadata.release]
+pre-release-replacements = [
+    { file = "./CHANGELOG.md", search = "Unreleased", replace = "{{version}}" },
+]
+
+[dependencies]
+tilt_tool = { path = "../../tools/tilt", default-features = false }
+extism-pdk = { workspace = true }
+moon_pdk_api = { workspace = true }
+schematic = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+moon_pdk_test_utils = { workspace = true }
+starbase_sandbox = { workspace = true }
+tokio = { workspace = true }
+
+[features]
+default = ["wasm"]
+wasm = ["tilt_tool/wasm"]

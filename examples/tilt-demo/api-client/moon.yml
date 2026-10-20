@@ -1,0 +1,6 @@
+# A library with no services. Project dependencies are followed through it.
+dependsOn: ["api"]
+
+tasks:
+  build:
+    command: "echo building api-client"

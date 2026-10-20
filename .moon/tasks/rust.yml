@@ -1,0 +1,58 @@
+$schema: "../cache/schemas/tasks.json"
+
+# Inherited by every Rust plugin crate (extensions/*, toolchains/*, ...).
+inheritedBy:
+  toolchain: "rust"
+
+fileGroups:
+  cargo:
+    - "Cargo.toml"
+    - "/Cargo.toml"
+    - "/Cargo.lock"
+    - "/rust-toolchain.toml"
+  sources:
+    - "src/**/*"
+  tests:
+    - "tests/**/*"
+
+tasks:
+  # Release build. The PDK test harnesses load target/wasm32-wasip1/release
+  # before debug, so tests must run against this build (a stale release .wasm
+  # would otherwise shadow a fresh debug one). Also used for dogfooding.
+  build:
+    command: "cargo build --target wasm32-wasip1 --release"
+    inputs:
+      - "@group(cargo)"
+      - "@group(sources)"
+    env: &env
+      CARGO_TERM_COLOR: "always"
+
+  check:
+    command: "cargo check --all-targets"
+    inputs:
+      - "@group(cargo)"
+      - "@group(sources)"
+      - "@group(tests)"
+    env: *env
+
+  lint:
+    command: "cargo clippy --all-targets -- -D warnings"
+    inputs:
+      - "@group(cargo)"
+      - "@group(sources)"
+      - "@group(tests)"
+    env: *env
+
+  # Unit tests run natively; integration tests load the built .wasm into a
+  # sandboxed moon host via `moon_pdk_test_utils`.
+  test:
+    command: "cargo test --no-default-features"
+    deps:
+      - "build"
+    inputs:
+      - "@group(cargo)"
+      - "@group(sources)"
+      - "@group(tests)"
+    env:
+      <<: *env
+      NO_COLOR: "true"

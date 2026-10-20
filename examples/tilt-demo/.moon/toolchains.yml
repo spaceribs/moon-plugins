@@ -1,0 +1,8 @@
+$schema: "https://moonrepo.dev/schemas/toolchains.json"
+
+# Installs Tilt through proto and puts it on PATH for tasks that use it.
+tilt:
+  # Local build (`moon run tilt-toolchain:build` from the repo root). Published:
+  #   plugin: "github://spaceribs/moon-plugins/tilt_toolchain"
+  plugin: "file://../../../target/wasm32-wasip1/release/tilt_toolchain.wasm"
+  version: "0.37.8"

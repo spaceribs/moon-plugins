@@ -1,0 +1,19 @@
+# A plain `node` server has no live reload, so Tilt restarts it when its
+# inputs change instead of waiting for upstream build outputs.
+project:
+  tilt:
+    serviceRestart: "inputs"
+
+dependsOn: ["db"]
+
+tasks:
+  build:
+    command: "echo building api"
+    inputs: ["src/**/*"]
+
+  # Tagged task: exposed to Tilt even though the project is not tagged.
+  serve:
+    command: "node src/server.mjs"
+    preset: "server"
+    deps: ["build"]
+    tags: ["tilt"]

@@ -1,0 +1,5 @@
+# Not tagged; only exposed when `includePersistent: true`.
+tasks:
+  serve:
+    command: "echo docs"
+    preset: "server"

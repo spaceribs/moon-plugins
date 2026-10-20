@@ -1,0 +1,15 @@
+$schema: "https://moonrepo.dev/schemas/workspace.json"
+
+# Standalone workspace for manually exercising the Tilt extension.
+# Build the plugin first: `moon run tilt-extension:build` (from the repo root).
+projects:
+  web: "web"
+  api: "api"
+  api-client: "api-client"
+  db: "db"
+  docs: "docs"
+  tooling: "tooling"
+
+vcs:
+  client: "git"
+  defaultBranch: "main"

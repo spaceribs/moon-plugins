@@ -1,0 +1,16 @@
+id: "root"
+
+# Don't inherit the per-crate Rust tasks at the workspace root.
+workspace:
+  inheritedTasks:
+    include: []
+
+tasks:
+  format:
+    command: "cargo fmt --all --check"
+    inputs:
+      - "**/*.rs"
+
+  format-write:
+    command: "cargo fmt --all"
+    preset: "utility"

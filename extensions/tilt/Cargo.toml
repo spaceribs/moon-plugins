@@ -1,0 +1,37 @@
+[package]
+name = "tilt_extension"
+version = "0.1.0"
+description = "moon extension WASM plugin that connects the moon task graph to Tilt (tilt.dev)."
+authors = ["spaceribs"]
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[package.metadata.release]
+pre-release-replacements = [
+    { file = "./CHANGELOG.md", search = "Unreleased", replace = "{{version}}" },
+]
+
+[dependencies]
+extism-pdk = { workspace = true }
+moon_common = { workspace = true }
+moon_config = { workspace = true }
+moon_pdk = { workspace = true }
+moon_pdk_api = { workspace = true }
+schematic = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tera = { workspace = true }
+
+[dev-dependencies]
+moon_pdk_test_utils = { workspace = true }
+starbase_sandbox = { workspace = true }
+tokio = { workspace = true }
+
+[features]
+default = ["wasm"]
+wasm = []

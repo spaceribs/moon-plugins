@@ -1,0 +1,140 @@
+use serde::Deserialize;
+
+/// When Tilt restarts a service (`serve_cmd`) resource.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, schematic::Schematic)]
+#[serde(rename_all = "camelCase")]
+pub enum ServiceRestart {
+    /// Restart when moon rebuilds an upstream task dependency, i.e. when its
+    /// outputs change. Source edits are left to the service's own live reload
+    /// (webpack, vite, nodemon, ...), so hot-reloading servers keep their state.
+    #[default]
+    UpstreamOutputs,
+    /// Restart when the service task's own inputs change. For servers without
+    /// live reload and without a build task.
+    Inputs,
+    /// Never restart on file changes.
+    Never,
+}
+
+/// Settings for the Tilt extension, configured in `.moon/extensions.yml`.
+///
+/// ```yaml
+/// tilt:
+///   plugin: "github://spaceribs/moon-plugins/tilt_extension"
+///   tag: "tilt"
+///   output: "Tiltfile.moon"
+/// ```
+#[derive(Clone, Debug, Deserialize, schematic::Schematic)]
+#[serde(default, rename_all = "camelCase")]
+pub struct TiltExtensionConfig {
+    /// Tasks (or projects) with this tag are exposed as Tilt resources.
+    /// Tagged projects contribute all of their persistent tasks.
+    pub tag: String,
+
+    /// Expose every persistent (`preset: server`) task as a resource,
+    /// regardless of tags.
+    pub include_persistent: bool,
+
+    /// Make services wait on the services of the projects they depend on
+    /// (moon's project graph), following through projects without services.
+    pub link_project_dependencies: bool,
+
+    /// Also expose upstream services that aren't tagged, so every service a
+    /// selected service depends on is represented in Tilt.
+    pub include_upstream_services: bool,
+
+    /// Project dependency scopes that represent runtime relationships.
+    pub dependency_scopes: Vec<String>,
+
+    /// `include()` every project's own `Tiltfile` from the generated file, so
+    /// the main Tiltfile brings up the entire cluster.
+    pub include_project_tiltfiles: bool,
+
+    /// Regenerate during moon's workspace sync (`moon sync` and before
+    /// `moon run`), instead of only through `moon ext tilt -- generate`.
+    pub sync: bool,
+
+    /// Apply the workspace's gitignore patterns to every Tilt resource
+    /// (`watch_settings`), including ones in your own Tiltfiles, so Tilt
+    /// neither watches nor rebuilds for gitignored files.
+    pub global_gitignore: bool,
+
+    /// Regenerate the generated file from a `(moon)` Tilt resource when moon's
+    /// configuration changes while Tilt is running.
+    pub watch_config: bool,
+
+    /// Build container images from moon's generated Dockerfiles for projects
+    /// that opt in with `project.tilt.k8s` or `project.tilt.image`.
+    pub images: bool,
+
+    /// Binary used to build images.
+    pub docker_bin: String,
+
+    /// Sync source changes into running containers (Tilt Live Update)
+    /// instead of rebuilding images. Override per project with
+    /// `project.tilt.liveUpdate`.
+    pub live_update: bool,
+
+    /// Working directory of moon's generated images (`WORKDIR`), where the
+    /// workspace layout is reproduced and sources are synced to.
+    pub image_workdir: String,
+
+    /// Accept moon project IDs as Tilt args (`tilt up -- web`, `tilt args --
+    /// web`) through `config.parse()`. Disable if your own Tiltfile already
+    /// defines Tiltfile args.
+    pub select_by_project: bool,
+
+    /// When to restart services. Override per project with
+    /// `project.metadata.tilt.serviceRestart` in moon.yml.
+    pub service_restart: ServiceRestart,
+
+    /// Workspace-relative path of a custom Tera template used to render the
+    /// generated file, instead of the built-in one. Custom templates can
+    /// `{% extends "moon/Tiltfile.moon.tera" %}` to override individual blocks.
+    pub template: Option<String>,
+
+    /// Workspace-relative path of the generated Starlark file.
+    pub output: String,
+
+    /// Workspace-relative path of the main Tiltfile. Created with an
+    /// `include()` of the generated file when it does not exist.
+    pub tiltfile: String,
+
+    /// Watch task inputs with Tilt and re-run/restart resources on change.
+    pub watch_inputs: bool,
+
+    /// Binary used to invoke moon from Tilt resources.
+    pub moon_bin: String,
+
+    /// Binary used to invoke Tilt. When the Tilt toolchain is configured,
+    /// its pinned version is preferred via proto shims.
+    pub tilt_bin: String,
+}
+
+impl Default for TiltExtensionConfig {
+    fn default() -> Self {
+        Self {
+            tag: "tilt".into(),
+            include_persistent: false,
+            link_project_dependencies: true,
+            include_upstream_services: true,
+            dependency_scopes: vec!["production".into(), "development".into(), "peer".into()],
+            include_project_tiltfiles: true,
+            sync: true,
+            global_gitignore: true,
+            watch_config: true,
+            images: true,
+            docker_bin: "docker".into(),
+            live_update: true,
+            image_workdir: "/app".into(),
+            select_by_project: true,
+            service_restart: ServiceRestart::default(),
+            template: None,
+            output: "Tiltfile.moon".into(),
+            tiltfile: "Tiltfile".into(),
+            watch_inputs: true,
+            moon_bin: "moon".into(),
+            tilt_bin: "tilt".into(),
+        }
+    }
+}
