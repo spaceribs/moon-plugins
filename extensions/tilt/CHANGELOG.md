@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.0](https://github.com/spaceribs/moon-plugins/compare/tilt_extension-v0.1.0...tilt_extension-v0.2.0) - 2026-10-20
+
+### Added
+
+- *(tilt)* [**breaking**] reference user-deployed workloads instead of generating k8s manifests
+
+### Other
+
+- add release-plz and commit linting
+
 ## [0.1.0] - 2026-10-20
 
 Initial release.
