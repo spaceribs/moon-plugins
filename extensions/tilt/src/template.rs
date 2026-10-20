@@ -50,6 +50,9 @@ pub struct TemplateContext<'a> {
     pub projects: Vec<TemplateProject>,
     /// Container images built from moon's generated Dockerfiles.
     pub images: &'a [crate::images::Image],
+    /// Workloads deployed by project Tiltfiles (`project.tilt.workloads`),
+    /// decorated with labels and `resource_deps`.
+    pub workloads: &'a [crate::workloads::DecoratedWorkload],
     /// Whether any image restarts its process after a Live Update sync, so
     /// Tilt's `restart_process` extension must be loaded.
     pub restart_process: bool,

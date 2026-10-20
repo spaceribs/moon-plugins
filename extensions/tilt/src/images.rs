@@ -1,6 +1,6 @@
-//! Container images built from moon's generated Dockerfiles, for projects
-//! that deploy as containers (a generated Kubernetes Deployment, or the user's
-//! own k8s YAML or compose).
+//! Container images built from moon's generated Dockerfiles, for projects that
+//! opt in with `project.tilt.image`. The user's own Kubernetes or Compose
+//! resources deploy them by referencing the image name.
 //!
 //! moon's Dockerfiles copy the whole workspace and run `moon docker scaffold`,
 //! so the build context must stay the workspace root, and `docker_build(only=)`
@@ -12,7 +12,7 @@ use crate::config::TiltExtensionConfig;
 use crate::query::{QueryProjectsOutput, QueryTasksOutput};
 use crate::tiltfile::path_to_root;
 use crate::watch::{expand_braces, glob_base};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Where generated Dockerfiles are written (gitignored moon cache).
@@ -22,7 +22,8 @@ pub const DOCKERFILE_DIR: &str = ".moon/cache/tilt";
 pub struct Image {
     /// moon project the image is built for.
     pub project: String,
-    /// Image name to reference in k8s YAML or compose files.
+    /// Image name to reference in k8s YAML or compose files, used verbatim as
+    /// the `custom_build` ref (registry prefixes included).
     pub image_ref: String,
     /// Workspace-relative path of the generated Dockerfile.
     pub dockerfile: String,
@@ -32,8 +33,6 @@ pub struct Image {
     pub watch: Vec<String>,
     /// Patterns within `watch` that don't trigger a rebuild (task outputs).
     pub ignore: Vec<String>,
-    /// Kubernetes deployment of the image, when `project.tilt.k8s` is set.
-    pub workload: Option<Workload>,
     /// Sync source changes into running containers instead of rebuilding.
     pub live_update: Option<LiveUpdate>,
 }
@@ -51,6 +50,10 @@ pub struct LiveUpdate {
     /// Restart the process after syncing (for apps without live reload),
     /// running this entrypoint through Tilt's `restart_process` extension.
     pub restart_entrypoint: Option<Vec<String>>,
+    /// Restart the container after syncing instead (`restart_container()`),
+    /// for images deployed with Docker Compose, where Tilt doesn't support
+    /// `restart_process`'s entrypoint override. The container re-runs its CMD.
+    pub restart_container: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -59,123 +62,9 @@ pub struct Sync {
     pub remote: String,
 }
 
-/// A Deployment (and Service, with ports) running a project's image. The
-/// container runs the project's `docker.file.startTask` (the Dockerfile CMD).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct Workload {
-    /// Tilt resource and Kubernetes object name (the project ID).
-    pub name: String,
-    /// Kubernetes manifests as a YAML stream of JSON documents.
-    pub manifests: String,
-    /// Container ports, forwarded to localhost like local dev servers.
-    pub port_forwards: Vec<u16>,
-    /// Upstream resources (from moon's project graph), filled by the planner.
-    pub resource_deps: Vec<String>,
-}
-
-/// Per-project Kubernetes settings from `project.tilt.k8s` in moon.yml.
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-pub struct K8sSettings {
-    pub replicas: Option<u32>,
-    /// Container ports. Each gets a Service port and a localhost port-forward.
-    pub ports: Vec<u16>,
-    pub env: BTreeMap<String, String>,
-    /// Container `resources` (`requests`/`limits`), passed through as-is.
-    /// The container runs `moon run`, so limits must leave room for moon.
-    pub resources: Option<serde_json::Value>,
-    /// Container `readinessProbe`, passed through as-is. Defaults to a TCP
-    /// check on the first port, so Tilt reports healthy only once the app
-    /// accepts connections. `false` disables it.
-    pub readiness: Option<serde_json::Value>,
-}
-
-/// The Deployment and Service for a project's image.
-pub fn k8s_manifests(name: &str, image_ref: &str, settings: &K8sSettings) -> String {
-    // Tilt sets `app.kubernetes.io/managed-by` itself.
-    let labels = serde_json::json!({ "app.kubernetes.io/name": name });
-
-    let mut container = serde_json::json!({
-        "name": name,
-        "image": image_ref,
-    });
-
-    if !settings.ports.is_empty() {
-        container["ports"] = settings
-            .ports
-            .iter()
-            .map(|port| serde_json::json!({ "containerPort": port }))
-            .collect();
-    }
-
-    if !settings.env.is_empty() {
-        container["env"] = settings
-            .env
-            .iter()
-            .map(|(key, value)| serde_json::json!({ "name": key, "value": value }))
-            .collect();
-    }
-
-    if let Some(resources) = &settings.resources {
-        container["resources"] = resources.clone();
-    }
-
-    match (&settings.readiness, settings.ports.first()) {
-        (Some(serde_json::Value::Bool(false)), _) => {}
-        (Some(probe), _) if probe.is_object() => {
-            container["readinessProbe"] = probe.clone();
-        }
-        (_, Some(port)) => {
-            container["readinessProbe"] = serde_json::json!({
-                "tcpSocket": { "port": port },
-                "periodSeconds": 2,
-            });
-        }
-        _ => {}
-    }
-
-    let deployment = serde_json::json!({
-        "apiVersion": "apps/v1",
-        "kind": "Deployment",
-        "metadata": { "name": name, "labels": labels },
-        "spec": {
-            "replicas": settings.replicas.unwrap_or(1),
-            "selector": { "matchLabels": { "app.kubernetes.io/name": name } },
-            "template": {
-                "metadata": { "labels": labels },
-                "spec": { "containers": [container] },
-            },
-        },
-    });
-
-    let mut documents = vec![deployment.to_string()];
-
-    // A Service gives other pods a stable DNS name: http://<project>:<port>.
-    if !settings.ports.is_empty() {
-        let service = serde_json::json!({
-            "apiVersion": "v1",
-            "kind": "Service",
-            "metadata": { "name": name, "labels": labels },
-            "spec": {
-                "selector": { "app.kubernetes.io/name": name },
-                "ports": settings
-                    .ports
-                    .iter()
-                    .map(|port| serde_json::json!({ "name": format!("port-{port}"), "port": port, "targetPort": port }))
-                    .collect::<Vec<_>>(),
-            },
-        });
-
-        documents.push(service.to_string());
-    }
-
-    // JSON documents are valid YAML; `---` separates them in one stream.
-    documents.join("\n---\n")
-}
-
-/// Plan an image for every project that opts in with `project.tilt.k8s`
-/// (build and deploy) or `project.tilt.image` (build only). `config_files` are the workspace-relative moon
-/// config files (the Dockerfile is generated from them).
+/// Plan an image for every project that opts in with `project.tilt.image`.
+/// `config_files` are the workspace-relative moon config files (the
+/// Dockerfile is generated from them).
 pub fn plan_images(
     projects: &QueryProjectsOutput,
     tasks: &QueryTasksOutput,
@@ -197,16 +86,13 @@ pub fn plan_images(
         .iter()
         .filter_map(|project| {
             // Opt-in, so `docker.file` settings meant for production images
-            // don't turn into local builds and deployments.
-            let tilt = project.config.tilt_metadata();
-            let custom_ref = tilt
+            // don't turn into local builds.
+            let image_ref = project
+                .config
+                .tilt_metadata()
                 .and_then(|tilt| tilt.get("image"))
-                .and_then(|value| value.as_str());
-            let k8s = tilt.and_then(|tilt| tilt.get("k8s"));
-
-            if custom_ref.is_none() && k8s.is_none() {
-                return None;
-            }
+                .and_then(|value| value.as_str())?
+                .to_owned();
 
             let closure = dependency_closure(&project.id, &by_id);
             let (watch, ignore) = image_triggers(&closure, &by_id, tasks, config_files);
@@ -218,24 +104,11 @@ pub fn plan_images(
                 source => format!("{}/{dockerfile}", path_to_root(&format!("{source}/_"))),
             };
 
-            let image_ref = custom_ref.unwrap_or(&project.id).to_owned();
-            let workload = k8s.map(|k8s| {
-                let settings: K8sSettings = serde_json::from_value(k8s.clone()).unwrap_or_default();
-
-                Workload {
-                    name: project.id.clone(),
-                    manifests: k8s_manifests(&project.id, &image_ref, &settings),
-                    port_forwards: settings.ports.clone(),
-                    resource_deps: vec![],
-                }
-            });
-
             let live_update = plan_live_update(project, &closure, &by_id, tasks, config, config_files);
 
             Some(Image {
                 project: project.id.clone(),
                 image_ref,
-                workload,
                 live_update,
                 command: format!(
                     "{moon} docker file {id} {dest} --defaults && {docker} build -t $EXPECTED_REF -f {dockerfile} .",
@@ -343,6 +216,7 @@ fn plan_live_update(
             ]),
             _ => None,
         },
+        restart_container: false,
     })
 }
 
@@ -530,8 +404,8 @@ mod tests {
         let tasks =
             serde_json::from_str(include_str!("../tests/__fixtures__/query/tasks.json")).unwrap();
 
-        // web is built and deployed to Kubernetes; api is only built, under a
-        // custom image name (deployed by the user).
+        // web and api build images (api under a registry-prefixed name),
+        // which the user's own manifests deploy.
         let web = projects
             .projects
             .iter_mut()
@@ -542,7 +416,7 @@ mod tests {
             .file
             .insert("startTask".into(), "dev".into());
         web.config.project = Some(QueryProjectMetadata {
-            metadata: serde_json::from_str(r#"{ "tilt": { "k8s": {} } }"#).unwrap(),
+            metadata: serde_json::from_str(r#"{ "tilt": { "image": "web" } }"#).unwrap(),
         });
 
         let api = projects
@@ -636,66 +510,7 @@ mod tests {
     }
 
     #[test]
-    fn generates_k8s_deployment_and_service() {
-        let settings: K8sSettings = serde_json::from_str(
-            r#"{
-                "replicas": 2,
-                "ports": [3001],
-                "env": { "LOG_LEVEL": "debug" },
-                "resources": { "limits": { "memory": "256Mi" } }
-            }"#,
-        )
-        .unwrap();
-        let manifests = k8s_manifests("api", "acme/api", &settings);
-        let documents: Vec<serde_json::Value> = manifests
-            .split("\n---\n")
-            .map(|doc| serde_json::from_str(doc).unwrap())
-            .collect();
-
-        let deployment = &documents[0];
-        let container = &deployment["spec"]["template"]["spec"]["containers"][0];
-
-        assert_eq!(deployment["kind"], "Deployment");
-        assert_eq!(deployment["spec"]["replicas"], 2);
-        assert_eq!(container["image"], "acme/api");
-        assert_eq!(container["ports"][0]["containerPort"], 3001);
-        assert_eq!(
-            container["env"][0],
-            serde_json::json!({ "name": "LOG_LEVEL", "value": "debug" })
-        );
-        assert_eq!(container["resources"]["limits"]["memory"], "256Mi");
-        assert_eq!(container["readinessProbe"]["tcpSocket"]["port"], 3001);
-
-        let service = &documents[1];
-
-        assert_eq!(service["kind"], "Service");
-        assert_eq!(service["metadata"]["name"], "api");
-        assert_eq!(service["spec"]["ports"][0]["port"], 3001);
-    }
-
-    #[test]
-    fn readiness_probe_can_be_customized_or_disabled() {
-        let custom: K8sSettings = serde_json::from_str(
-            r#"{ "ports": [80], "readiness": { "httpGet": { "path": "/health", "port": 80 } } }"#,
-        )
-        .unwrap();
-        let disabled: K8sSettings =
-            serde_json::from_str(r#"{ "ports": [80], "readiness": false }"#).unwrap();
-
-        assert!(k8s_manifests("a", "a", &custom).contains(r#""readinessProbe":{"httpGet""#));
-        assert!(!k8s_manifests("a", "a", &disabled).contains("readinessProbe"));
-    }
-
-    #[test]
-    fn omits_service_without_ports() {
-        let manifests = k8s_manifests("worker", "worker", &K8sSettings::default());
-
-        assert!(!manifests.contains("\n---\n"));
-        assert!(!manifests.contains("\"Service\""));
-    }
-
-    #[test]
-    fn builds_and_deploys_only_projects_that_opt_in() {
+    fn builds_only_projects_that_opt_in() {
         let (mut projects, tasks) = fixture();
         let images = plan_images(
             &projects,
@@ -705,12 +520,11 @@ mod tests {
         );
         let image = |images: &[Image], id: &str| images.iter().find(|i| i.project == id).cloned();
 
-        // `project.tilt.k8s`: built and deployed.
-        assert!(image(&images, "web").unwrap().workload.is_some());
-        // `project.tilt.image`: built only.
-        assert!(image(&images, "api").unwrap().workload.is_none());
+        assert!(image(&images, "web").is_some());
+        assert!(image(&images, "api").is_some());
 
         // `docker.file` settings alone (e.g. for production images) opt nothing in.
+        // Nor do `project.tilt.k8s` settings, which are no longer supported.
         let docs = projects
             .projects
             .iter_mut()
@@ -720,6 +534,9 @@ mod tests {
             .docker
             .file
             .insert("image".into(), "node:22".into());
+        docs.config.project = Some(QueryProjectMetadata {
+            metadata: serde_json::from_str(r#"{ "tilt": { "k8s": {} } }"#).unwrap(),
+        });
 
         let images = plan_images(
             &projects,
@@ -789,7 +606,7 @@ mod tests {
             .unwrap();
         web.config.project = Some(QueryProjectMetadata {
             metadata: serde_json::from_str(
-                r#"{ "tilt": { "k8s": {}, "serviceRestart": "inputs" } }"#,
+                r#"{ "tilt": { "image": "web", "serviceRestart": "inputs" } }"#,
             )
             .unwrap(),
         });
@@ -817,8 +634,10 @@ mod tests {
             .find(|p| p.id == "web")
             .unwrap();
         web.config.project = Some(QueryProjectMetadata {
-            metadata: serde_json::from_str(r#"{ "tilt": { "k8s": {}, "liveUpdate": false } }"#)
-                .unwrap(),
+            metadata: serde_json::from_str(
+                r#"{ "tilt": { "image": "web", "liveUpdate": false } }"#,
+            )
+            .unwrap(),
         });
 
         let images = plan_images(

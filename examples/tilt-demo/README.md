@@ -21,22 +21,28 @@ moon ext tilt -- up docs      # add docs
 moon ext tilt -- focus api    # only api (and db) from now on
 ```
 
-To run a project on Kubernetes, you need Docker and a local cluster (e.g. `ctlptl create cluster kind --registry=ctlptl-registry`). Add `docker.file` settings and ports to the project's `moon.yml`, e.g. for `api`:
+To run a project on Kubernetes, you need Docker and a local cluster (e.g. `ctlptl create cluster kind --registry=ctlptl-registry`). Build its image from moon's Dockerfile and deploy it with your own manifest, e.g. for `api`:
 
 ```yaml
+# api/moon.yml
 docker:
   file:
     image: "node:22"
     startTask: "serve"
 project:
   tilt:
-    k8s:
-      ports: [3001]
-      resources:
-        limits: { memory: "768Mi" }
+    serviceRestart: "inputs"
+    image: "api"
+    workloads: { k8s: ["api"] }
 ```
 
-Then `moon ext tilt -- ci api` builds the image, deploys it, and waits until it accepts connections. moon runs inside the image build too, so the extension must be loadable there. This workspace points at `../../../target`, outside the build context, so vendor the `.wasm` into the workspace first. See [Plugins inside the image build](../../extensions/tilt/README.md#plugins-inside-the-image-build).
+```python
+# api/Tiltfile
+k8s_yaml("k8s.yaml")   # a Deployment (and Service) using image "api"
+k8s_resource("api", port_forwards=[3001])
+```
+
+Then `moon ext tilt -- up api` builds the image, deploys it, and runs `db:serve` alongside. `api:serve` no longer runs on the host, `web:dev` waits on the `api` pod, and editing `api/src` syncs into the pod and restarts the server instead of rebuilding. moon runs inside the image build too, so the extension must be loadable there. This workspace points at `../../../target`, outside the build context, so vendor the `.wasm` into the workspace first. See [Plugins inside the image build](../../extensions/tilt/README.md#plugins-inside-the-image-build).
 
 - `web` is tagged `tilt`, so its persistent `dev` task is exposed, along with its `codegen` dependency.
 - `api:serve` is tagged individually.

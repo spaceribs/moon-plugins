@@ -1,32 +1,28 @@
 # tilt-kubernetes-deploy Specification
 
 ## Purpose
-How projects that opt in with `project.tilt.k8s` are deployed to a Kubernetes cluster and fit into the Tilt dependency graph in place of their local tasks.
+How projects migrate off the removed `project.tilt.k8s` manifest generation: the error that points them to migration, and the `export-k8s` command that writes their former manifest for them to deploy themselves (see `tilt-workloads`).
 
 ## Requirements
 
-### Requirement: Generated Deployment and Service
-A project with `project.tilt.k8s` SHALL get a Deployment named after the project, running its image with the configured `replicas` (default 1), `env`, and container `resources`, plus a Service exposing each configured port. The manifests SHALL reference the image by the same name the image build produces.
+### Requirement: Removed k8s settings fail with migration guidance
+When a project still sets `project.tilt.k8s`, generation MUST fail with an error naming the project, stating that manifest generation was removed, and pointing to `moon ext tilt -- export-k8s <project>` and `project.tilt.workloads`.
 
-#### Scenario: Ports configured
-- **WHEN** `project.tilt.k8s.ports` is `[3001]`
-- **THEN** a Service named after the project exposes port 3001
-- **AND** Tilt port-forwards 3001 to localhost
+#### Scenario: Leftover k8s settings
+- **WHEN** `api/moon.yml` sets `project.tilt.k8s: { ports: [3001] }`
+- **THEN** `moon ext tilt -- generate` fails with an error naming `api`, `export-k8s`, and `project.tilt.workloads`
 
-#### Scenario: No ports
-- **WHEN** no ports are configured
-- **THEN** no Service is generated
+### Requirement: Export former k8s settings as a manifest
+`moon ext tilt -- export-k8s <project>` SHALL write a Kubernetes manifest equivalent to what the removed generator produced from the project's `project.tilt.k8s` settings (Deployment, a Service for ports, and the readiness probe) to `<project>/k8s.yaml`, or to the path given with `--output <path>`, MUST NOT overwrite an existing file, and SHALL print the `project.tilt.workloads` and Tiltfile lines needed to deploy it.
 
-### Requirement: Readiness probe
-With ports configured, the container SHALL get a TCP readiness probe on the first port by default, so Tilt reports it healthy only once it accepts connections. A custom `readiness` probe SHALL be passed through, and `readiness: false` SHALL disable it.
+#### Scenario: Migrating a project
+- **WHEN** the user runs `moon ext tilt -- export-k8s api` for a project with `project.tilt.k8s: { ports: [3001] }`
+- **THEN** `api/k8s.yaml` contains the Deployment and Service, and the command prints `workloads: { k8s: ["api"] }` and `k8s_yaml("k8s.yaml")` with `k8s_resource("api", port_forwards=[3001])`
 
-#### Scenario: Slow-starting app
-- **WHEN** the container starts but the app isn't listening yet
-- **THEN** Tilt doesn't report the workload healthy
+#### Scenario: Custom output path
+- **WHEN** the user runs `moon ext tilt -- export-k8s api --output deploy/k8s/api.yaml`
+- **THEN** the manifest is written to `deploy/k8s/api.yaml`, and the printed `k8s_yaml(...)` line references that file
 
-### Requirement: Containerized projects replace their local tasks
-A deployed project's tasks MUST NOT run as local resources. Its Kubernetes resource, named after the project, SHALL stand in as its service in the project graph: dependents wait on it, it waits on its own upstream services (which are included), and its project ID selects it.
-
-#### Scenario: Dependent local service
-- **WHEN** `api` is deployed and `web:dev` depends on `api` through the project graph
-- **THEN** `api:serve` is not a local resource, and `web:dev` waits on the `api` workload
+#### Scenario: File already exists
+- **WHEN** `api/k8s.yaml` already exists
+- **THEN** the command fails without changing it

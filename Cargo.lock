@@ -5828,6 +5828,7 @@ dependencies = [
  "schematic",
  "serde",
  "serde_json",
+ "serde_norway",
  "starbase_sandbox",
  "tera",
  "tokio",

@@ -1,4 +1,5 @@
 use crate::config::TiltExtensionConfig;
+use crate::export;
 use crate::images::{self, TiltArgs};
 use crate::query::{QueryProjectsOutput, QueryTasksOutput};
 use crate::tiltfile;
@@ -88,6 +89,17 @@ pub enum TiltCommand {
         #[arg(last = true)]
         tilt_args: Vec<String>,
     },
+    /// Write the Kubernetes manifest that a project's removed
+    /// `project.tilt.k8s` settings generated, to deploy it yourself.
+    ExportK8s {
+        /// moon project ID.
+        project: String,
+
+        /// Workspace-relative path to write to. Defaults to
+        /// `<project>/k8s.yaml`.
+        #[arg(long)]
+        output: Option<String>,
+    },
     /// Tear down resources created by Tilt (`tilt down`). The instance
     /// itself stops with Ctrl-C in the terminal running `up`.
     Down {
@@ -141,7 +153,7 @@ pub fn execute_extension(Json(input): Json<ExecuteExtensionInput>) -> FnResult<(
 
     let Some(command) = args.command else {
         return Err(plugin_err!(
-            "A command is required: <id>generate</id>, <id>up</id>, <id>focus</id>, <id>ci</id>, or <id>down</id>. For example: <shell>moon ext tilt -- up web</shell>"
+            "A command is required: <id>generate</id>, <id>up</id>, <id>focus</id>, <id>ci</id>, <id>down</id>, or <id>export-k8s</id>. For example: <shell>moon ext tilt -- up web</shell>"
         ));
     };
 
@@ -234,6 +246,9 @@ pub fn execute_extension(Json(input): Json<ExecuteExtensionInput>) -> FnResult<(
         TiltCommand::Down { tilt_args } => {
             run_tilt(root, &config, "down", tilt_args)?;
         }
+        TiltCommand::ExportK8s { project, output } => {
+            export_k8s(root, &config, &project, output.as_deref())?;
+        }
     };
 
     Ok(())
@@ -298,12 +313,17 @@ fn render_generated(root: &VirtualPath, config: &TiltExtensionConfig) -> AnyResu
     };
 
     let projects: QueryProjectsOutput = query_moon(root, config, "projects")?;
+
+    if let Some(error) = export::removed_k8s_settings_error(&projects) {
+        return Err(anyhow!(error));
+    }
     let tasks: QueryTasksOutput = query_moon(root, config, "tasks")?;
     let project_tiltfiles =
         tiltfile::find_project_tiltfiles(&projects, config, |path| root.join(path).is_file());
     let gitignore = load_gitignore(root, &projects);
     let config_files = find_config_files(root, &projects, config);
-    let (resources, images) = tiltfile::plan_with_images(&projects, &tasks, config, &config_files);
+    let (resources, images, workloads) =
+        tiltfile::plan_with_images(&projects, &tasks, config, &config_files);
     let extension_id = get_plugin_id()?;
     let contents = tiltfile::render(
         &tiltfile::RenderInput {
@@ -312,6 +332,7 @@ fn render_generated(root: &VirtualPath, config: &TiltExtensionConfig) -> AnyResu
             config_files: &config_files,
             extension_id: extension_id.as_str(),
             images: &images,
+            workloads: &workloads,
             custom_template: custom_template.as_deref(),
             ..tiltfile::RenderInput::new(&resources, &projects, env!("CARGO_PKG_VERSION"))
         },
@@ -497,6 +518,47 @@ fn generate(root: &VirtualPath, config: &TiltExtensionConfig, check: bool) -> An
     if result.changed.contains(&config.tiltfile) {
         host_log!(stdout, "Created <path>{}</path>", config.tiltfile);
     }
+
+    Ok(())
+}
+
+/// Write a project's former generated manifest, refusing to overwrite.
+fn export_k8s(
+    root: &VirtualPath,
+    config: &TiltExtensionConfig,
+    project_id: &str,
+    output: Option<&str>,
+) -> AnyResult<()> {
+    let projects: QueryProjectsOutput = query_moon(root, config, "projects")?;
+    let Some(project) = projects
+        .projects
+        .iter()
+        .find(|project| project.id == project_id)
+    else {
+        return Err(anyhow!("Unknown project <id>{project_id}</id>"));
+    };
+    let export = export::export_k8s(project, output).map_err(|error| anyhow!(error))?;
+    let path = root.join(&export.path);
+
+    if path.exists() {
+        return Err(anyhow!(
+            "<path>{}</path> already exists. Remove it, or choose another file with <shell>--output</shell>.",
+            export.path
+        ));
+    }
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    fs::write(&path, &export.manifest)?;
+
+    host_log!(
+        stdout,
+        "Wrote <path>{}</path>. {}",
+        export.path,
+        export.instructions
+    );
 
     Ok(())
 }

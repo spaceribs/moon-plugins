@@ -85,7 +85,7 @@ local_resource(
 # Container images from moon's generated Dockerfiles (`moon docker file`). The
 # build sees the whole workspace, but only changes to the project and what it
 # depends on trigger a rebuild. Projects not in `--to-edit` use the image as
-# published. Deployed to Kubernetes for projects with `project.tilt.k8s`.
+# published. Your own Kubernetes or Compose resources deploy them by name.
 # Source changes are synced into running containers (Live Update) instead of
 # rebuilding, except for files that need a rebuild (manifests, lockfiles).
 {%- if restart_process %}
@@ -120,27 +120,35 @@ if _moon_edit({{ image.project | starlark }}):
 {%- for sync in lu.syncs %}
             sync({{ sync.local | moon_path }}, {{ sync.remote | starlark }}),
 {%- endfor %}
+{%- if lu.restart_container %}
+            restart_container(),
+{%- endif %}
         ],
 {%- endif %}
     )
-{%- if image.workload %}
-
-k8s_yaml(blob({{ image.workload.manifests | starlark }}))
-
-k8s_resource(
-    {{ image.workload.name | starlark }},
-    labels = [{{ image.project | starlark }}],
-{%- if image.workload.resource_deps %}
-    resource_deps = {{ image.workload.resource_deps | starlark }},
-{%- endif %}
-{%- if image.workload.port_forwards %}
-    port_forwards = {{ image.workload.port_forwards | starlark }},
-{%- endif %}
-)
-{%- endif %}
 {%- endfor %}
 {%- endif %}
 {%- endblock images %}
+{%- block workloads -%}
+{%- if workloads %}
+
+# Workloads deployed by project Tiltfiles (`project.tilt.workloads`). Tilt
+# merges these with the projects' own k8s_resource/dc_resource calls, so
+# nothing they set is replaced. Compose services must be loaded before this.
+{%- for workload in workloads %}
+
+{% if workload.kind == "compose" %}dc_resource{% else %}k8s_resource{% endif %}(
+    {{ workload.name | starlark }},
+{%- if workload.labels %}
+    labels = {{ workload.labels | starlark }},
+{%- endif %}
+{%- if workload.resource_deps %}
+    resource_deps = {{ workload.resource_deps | starlark }},
+{%- endif %}
+)
+{%- endfor %}
+{%- endif %}
+{%- endblock workloads %}
 {%- block selection -%}
 {%- if select_by_project %}
 

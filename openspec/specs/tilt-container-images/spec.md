@@ -6,11 +6,19 @@ How the Tilt extension builds container images from moon's generated Dockerfiles
 ## Requirements
 
 ### Requirement: Images are opt-in
-The extension SHALL build an image only for projects that set `project.tilt.k8s` (build and deploy) or `project.tilt.image` (build only). `docker.file` settings alone MUST NOT opt a project in. With `images: false`, no images SHALL be built.
+The extension SHALL build an image only for projects that set `project.tilt.image`. Building an image MUST NOT deploy it: the image is used by whichever of the user's Kubernetes or Compose resources reference it by name. `docker.file` settings alone MUST NOT opt a project in. With `images: false`, no images SHALL be built.
 
 #### Scenario: Production Dockerfile settings only
-- **WHEN** a project has `docker.file` settings but no `project.tilt.k8s` or `project.tilt.image`
+- **WHEN** a project has `docker.file` settings but no `project.tilt.image`
 - **THEN** no image build is generated for it
+
+#### Scenario: Image used by the project's own manifest
+- **WHEN** `api` sets `project.tilt.image: "api"` and its own manifest's container uses image `api`
+- **THEN** Tilt builds the image from moon's Dockerfile and deploys it through that manifest
+
+#### Scenario: Image without a deploy
+- **WHEN** a project sets `project.tilt.image` and no resource references the image
+- **THEN** no deployment is generated for it
 
 ### Requirement: Built from moon's Dockerfile with the workspace as context
 Each image SHALL be a `custom_build` named `project.tilt.image` (default: the project ID) that runs `moon docker file <project>` into `.moon/cache/tilt/` and then `docker build` with the whole workspace as context.

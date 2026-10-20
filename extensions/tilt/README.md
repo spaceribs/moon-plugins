@@ -7,7 +7,7 @@ A moon extension that runs your moon workspace in [Tilt](https://tilt.dev): one 
 - **Only affected things re-run.** Tilt watches exactly the files moon hashes as inputs, honors `.gitignore`, and leaves source edits to your dev server's own live reload.
 - **Select by project:** `moon ext tilt -- up web` runs `web` and everything it needs. Add or swap projects in the running instance.
 - **Kept in sync.** The generated Tiltfile updates on `moon sync`, before `moon run`, and while Tilt runs.
-- **Containers (opt-in).** Projects can be built from moon's generated Dockerfiles and deployed to Kubernetes, with Live Update and only affected images built from source.
+- **Containers (opt-in).** Projects can be built from moon's generated Dockerfiles, with Live Update and only affected images built from source. The Kubernetes or Compose resources your own Tiltfiles deploy join moon's project graph.
 
 Pair it with the [Tilt toolchain](../../toolchains/tilt) to install and pin the Tilt binary.
 
@@ -21,8 +21,9 @@ Pair it with the [Tilt toolchain](../../toolchains/tilt) to install and pin the 
   - [Service dependencies from the project graph](#service-dependencies-from-the-project-graph)
   - [What triggers a re-run or restart](#what-triggers-a-re-run-or-restart)
   - [One Tilt instance, selected by project](#one-tilt-instance-selected-by-project)
+  - [Workloads your Tiltfiles deploy](#workloads-your-tiltfiles-deploy)
   - [The generated Tiltfile](#the-generated-tiltfile)
-- [Containers and Kubernetes (opt-in)](#containers-and-kubernetes-opt-in)
+- [Containers (opt-in)](#containers-opt-in)
 - [Templates](#templates)
 - [Configuration](#configuration)
 
@@ -109,7 +110,7 @@ web:dev  waits on  api:serve  waits on  db:serve
 - **Only runtime scopes count.** By default only `production`, `development`, and `peer` dependencies are followed. `build`-scoped dependencies (tooling, codegen) are not services your app talks to. Change this with `dependencyScopes`.
 - **Only services are linked.** Non-persistent resources only follow their task `deps`.
 
-Tilt considers a local `serve_cmd` resource ready as soon as it starts. So for local services "waits on" means "starts after", not "starts after it's accepting connections". Kubernetes workloads get a [readiness probe](#deploying-to-kubernetes).
+Tilt considers a local `serve_cmd` resource ready as soon as it starts. So for local services "waits on" means "starts after", not "starts after it's accepting connections". For [workloads](#workloads-your-tiltfiles-deploy), give the container a readiness probe in your manifest.
 
 ### What triggers a re-run or restart
 
@@ -171,6 +172,37 @@ Selecting projects disables everything not selected, including resources from yo
 
 `up` and `focus` talk to the instance on `TILT_PORT`/`TILT_HOST` (default `localhost:10350`), like every `tilt` command. If your own Tiltfile already defines Tiltfile args with `config.parse()`, set `selectByProject: false`.
 
+### Workloads your Tiltfiles deploy
+
+Projects that deploy themselves from their own `Tiltfile` (raw YAML, kustomize, Helm, or Docker Compose) can declare those Tilt resources by name, so they join moon's project graph. The extension never generates or reads the deployment. It only references it:
+
+```yaml
+# apps/api/moon.yml
+project:
+  tilt:
+    workloads:
+      k8s: ["api", "api-worker"]   # k8s_yaml, kustomize, helm(), helm_resource
+      compose: []                  # docker_compose services
+```
+
+```python
+# apps/api/Tiltfile
+k8s_yaml("k8s.yaml")
+k8s_resource("api", port_forwards=[3001], labels=["team-a"])
+```
+
+A project with declared workloads is **containerized**:
+
+- **Its ID selects its workloads.** `moon ext tilt -- up api` enables `api` and `api-worker`, and their dependencies.
+- **The workloads join the graph.** Each workload waits on the project's upstream services (pulling them in), and services of projects that depend on `api` wait on every one of its workloads.
+- **Its services don't also run on the host.** Persistent tasks, and anything selected through the project's tag or `includePersistent`, aren't local resources, even when a persistent task is tagged itself. A non-persistent task tagged itself (a codegen or schema-export step, say) is still a local resource, with its task dependencies.
+
+The extension decorates each workload with `k8s_resource(...)` or `dc_resource(...)`, adding `resource_deps` and a label with the project ID. Tilt merges these with your own calls, so labels, dependencies, port-forwards, and other settings from your Tiltfile are kept. If your Tiltfiles already label workloads (by role, for example) and the extra project label repeats them in the Tilt UI, set `workloadLabels: "none"` in the workspace settings to add only `resource_deps`.
+
+- **Names must match what your Tiltfile deploys**, including Helm releases from the [`helm_resource`](https://github.com/tilt-dev/tilt-extensions/tree/master/helm_resource) extension, which go under `k8s`. A declared name that nothing deploys fails Tiltfile loading with Tilt's `k8s_resource specified unknown resource "<name>"`.
+- Declare each kind under its own key: `k8s_resource` and `dc_resource` only accept their own kind of resource.
+- **Load Compose files before the decorations.** For Kubernetes the order doesn't matter, but Tilt rejects `dc_resource` for a service no `docker_compose()` has loaded yet (`no Docker Compose service found with name "<name>"`). Project Tiltfiles are included before the decorations, so call `docker_compose()` there, or before `include("./Tiltfile.moon")` in your main `Tiltfile`.
+
 ### The generated Tiltfile
 
 The extension keeps a top-level Tiltfile in sync with your workspace, so `tilt up` from the workspace root brings up everything:
@@ -194,14 +226,14 @@ If you already have a `Tiltfile`, add `include("./Tiltfile.moon")` to it.
 
 **While Tilt runs**, a `(moon)` resource watches everything the generated file is derived from: `.moon/*` config and `.moon/tasks/`, every project's `moon.yml`, the `.gitignore` files, and a custom template. When one changes, it runs `moon ext tilt -- generate`, and Tilt reloads only if the output changed. It doesn't run at startup, and stays enabled whatever projects are selected. Disable with `watchConfig: false`. New projects matched by workspace globs are picked up the next time anything regenerates the file.
 
-## Containers and Kubernetes (opt-in)
+## Containers (opt-in)
 
-Projects can also run as containers: built from moon's [generated Dockerfiles](https://moonrepo.dev/docs/commands/docker/file) and deployed to your local cluster. This is opt-in per project, so `docker.file` settings you use for production images are left alone:
+Projects can also run as containers, built from moon's [generated Dockerfiles](https://moonrepo.dev/docs/commands/docker/file). The extension builds the image. Your own Kubernetes YAML, Helm chart, or Compose file deploys it, and [declaring that workload](#workloads-your-tiltfiles-deploy) connects it to moon's project graph. Both are opt-in per project, so `docker.file` settings you use for production images are left alone:
 
 | `moon.yml` | Result |
 | --- | --- |
-| `project.tilt.k8s: {...}` | image built and deployed to Kubernetes |
-| `project.tilt.image: "name"` only | image built; you deploy it yourself |
+| `project.tilt.image: "name"` | image built from moon's Dockerfile, for your own resources to deploy |
+| `project.tilt.workloads: {...}` | project containerized: its services run as those workloads |
 | `docker.file` settings only | nothing |
 
 ```yaml
@@ -212,13 +244,22 @@ docker:
     startTask: "serve"  # what the container runs
 project:
   tilt:
-    k8s:
-      ports: [3001]
+    image: "tilt.dev/api"
+    workloads:
+      k8s: ["api"]
 ```
+
+```python
+# apps/api/Tiltfile
+k8s_yaml("k8s.yaml")   # a Deployment whose container uses image "tilt.dev/api"
+k8s_resource("api", port_forwards=[3001])
+```
+
+Upgrading from `project.tilt.k8s`? See [Migrating from generated manifests](#migrating-from-generated-manifests).
 
 ### Images
 
-Each image is a `custom_build`. It runs `moon docker file <project>` (into `.moon/cache/tilt/`), then `docker build` with the **whole workspace as context**, which moon's Dockerfiles need for `moon docker scaffold`. The image is named after the project, or `project.tilt.image`. What triggers a rebuild comes from moon's project graph, not the build context:
+Each image is a `custom_build`. It runs `moon docker file <project>` (into `.moon/cache/tilt/`), then `docker build` with the **whole workspace as context**, which moon's Dockerfiles need for `moon docker scaffold`. The image is named `project.tilt.image`. What triggers a rebuild comes from moon's project graph, not the build context:
 
 - the source directories of the project and every project it depends on (transitively, all scopes)
 - their moon config (`.moon/*`, `moon.yml`), which the Dockerfile is generated from
@@ -244,43 +285,27 @@ node_modules
 
 - **Published locators** (`github://`, `https://`) are downloaded inside the build and just work.
 - **`file://` locators must point inside the workspace.** Paths outside it don't exist in the container.
-- **Vendored plugins (e.g. `.moon/plugins/`) also need a [custom Dockerfile template](https://moonrepo.dev/docs/config/workspace#docker), because moon only copies scaffolded config into the build stage.** Copy moon's [default template](https://github.com/moonrepo/moon/blob/master/crates/docker/templates/Dockerfile.tera) and add this after its `COPY --from=skeleton /app/.moon/docker/configs .` line:
+- **Vendored plugins (e.g. `.moon/plugins/`) must be added to the scaffold**, because moon only copies scaffolded config into the build stage. Add them to the configs phase in `.moon/workspace.yml`:
 
-  ```dockerfile
-  COPY --from=skeleton /app/.moon/plugins ./.moon/plugins
+  ```yaml
+  docker:
+    scaffold:
+      configsPhaseGlobs: [".moon/plugins/**/*"]
   ```
 
-### Deploying to Kubernetes
+  (A [custom Dockerfile template](https://moonrepo.dev/docs/config/workspace#docker) with `COPY --from=skeleton /app/.moon/plugins ./.moon/plugins` after its configs `COPY` works too.)
 
-A project with `project.tilt.k8s` gets a generated Deployment, plus a Service when it has ports. The manifests reference moon's image by construction, so the name can't drift. The container runs the project's `docker.file.startTask`.
+### Deploying your image
 
-```yaml
-# apps/api/moon.yml
-project:
-  tilt:
-    k8s:
-      ports: [3001]                 # Service port + localhost port-forward
-      replicas: 1
-      env: { LOG_LEVEL: "debug" }
-      resources:                    # passed through to the container as-is
-        requests: { cpu: "100m", memory: "256Mi" }
-        limits: { cpu: "1", memory: "768Mi" }
-      # readiness: false            # default: TCP check on the first port
-```
+Tilt only builds images that a deploy uses, matching on the image name:
 
+- **Use `project.tilt.image` verbatim in your manifest or Compose file**, registry prefix included (`tilt.dev/api`, `localhost:5000/api`). Tilt rewrites the reference to the image it built. If the names don't match, Tilt silently runs the published image instead.
+- **Remove your own build of the same image.** If your Tiltfile already calls `docker_build("tilt.dev/api", ...)` or `custom_build(...)` for that name, Tilt refuses to load: `Image for ref "tilt.dev/api" has already been defined`. Delete it when you set `project.tilt.image`.
+- **Don't set `command:` if you rely on restarts.** With `serviceRestart: "inputs"`, Live Update restarts a Kubernetes container's process by wrapping the image's entrypoint (the project's `docker.file.startTask`). A `command:` in your manifest replaces that entrypoint, so the process is never restarted after a sync. Use `args:` instead, or let the app reload itself. (Compose services are restarted as a whole container, so a Compose `command:` is simply what re-runs.)
 - **Memory:** the container runs `moon run <startTask>`, so moon itself (and the task's dependencies) runs in the pod alongside your app. Size limits for both. A small Node service peaked at about 374 MB in testing, and was OOM-killed at a 256Mi limit.
-- **Readiness:** with ports, the pod gets a TCP readiness probe on the first one by default, so Tilt (and `tilt ci`) only report healthy once the app accepts connections, not when the container starts. Pass your own probe (`readiness: { httpGet: { path: "/health", port: 3001 } }`) or disable it with `readiness: false`.
+- **Readiness:** Tilt reports a pod healthy once its containers are ready, so give it a readiness probe (e.g. a TCP check on its port). Without one, Tilt and `tilt ci`, and the services waiting on it, consider it up as soon as the container starts.
 
-A deployed project is **containerized**:
-
-- its tasks no longer run on the host; the Kubernetes resource (named after the project) replaces them
-- other services' links point at it, so `web:dev` waits on the `api` pod
-- it waits on its own upstream services from moon's project graph
-- the project ID selects it (`moon ext tilt -- up api`), and `--edit` decides whether its image builds from source
-
-Other pods reach it at `http://<project>:<port>` through its Service. You reach it at `localhost:<port>` through the port-forward.
-
-To deploy an image yourself (your own YAML, Helm, or Compose), set only `project.tilt.image` and reference that name from `k8s_yaml(...)`/`helm(...)` or `docker_compose(...)` in your `Tiltfile`. Tilt only builds images a deploy uses, and if the names don't match it silently runs the published image instead.
+`--edit` decides whether the image builds from source or uses the published one ([below](#building-only-some-images-from-source)).
 
 ### Live Update
 
@@ -290,7 +315,7 @@ Source changes are synced into running containers instead of rebuilding the imag
 - **Full rebuild instead:** moon config, root-level task inputs (lockfiles), and explicit task input files (manifests like `package.json`), since those change dependencies or the Dockerfile itself.
 - **After syncing**, the same `serviceRestart` setting as local services decides:
   - default: the app is expected to reload itself (webpack, vite, nodemon, `node --watch`)
-  - `serviceRestart: "inputs"`: the process is restarted with Tilt's [`restart_process`](https://github.com/tilt-dev/tilt-extensions/tree/master/restart_process) extension, re-running the project's `docker.file.startTask`. The extension is fetched from GitHub when the Tiltfile loads.
+  - `serviceRestart: "inputs"`: the process is restarted with Tilt's [`restart_process`](https://github.com/tilt-dev/tilt-extensions/tree/master/restart_process) extension, re-running the project's `docker.file.startTask`. The extension is fetched from GitHub when the Tiltfile loads. Projects whose [declared workloads](#workloads-your-tiltfiles-deploy) are all Compose services restart the container instead (`restart_container()`), because Tilt doesn't support `restart_process` for Compose. The container re-runs its CMD, which is the same `startTask`.
 
 Disable it per project with `project.tilt.liveUpdate: false`, or for the workspace with `liveUpdate: false`. Edits to a custom moon Dockerfile template (e.g. `.moon/Dockerfile.tera`) aren't watched; trigger a rebuild from the Tilt UI after changing one.
 
@@ -307,6 +332,37 @@ moon ext tilt -- up --edit-affected --base main   # ...compared to main (committ
 `--edit-affected` uses moon's own change detection (`moon query projects --affected --downstream deep`). With no `--base`, it covers uncommitted changes. When nothing is affected, nothing builds from source. On a running Tilt these flags update the choice in place, and later `up`/`focus` calls keep it. From Tilt directly: `tilt args -- web --to-edit api` (`--to-edit none` for no source builds).
 
 `focus` and `ci` take the same flags, so CI can bring up the stack with only the changed services built: `moon ext tilt -- ci --edit-affected --base origin/main`.
+
+### Migrating from generated manifests
+
+Earlier versions generated a Deployment and Service from `project.tilt.k8s`. That was removed: generated manifests couldn't express what real workloads need (liveness probes, init containers, Secrets, your own label conventions). Generation now fails with an error naming each project that still sets `project.tilt.k8s`. To migrate one:
+
+1. Export what the extension used to generate:
+
+   ```sh
+   moon ext tilt -- export-k8s api                              # writes api/k8s.yaml
+   moon ext tilt -- export-k8s api --output deploy/k8s/api.yaml # or anywhere in the workspace
+   ```
+
+   It writes the Deployment, a Service when you had ports, and the readiness probe, as YAML for you to maintain. It never overwrites an existing file.
+
+2. Replace `project.tilt.k8s` in the project's `moon.yml` with what the command prints. `image` keeps the image building from moon's Dockerfile (the generator implied it), and `workloads` keeps the project containerized:
+
+   ```yaml
+   project:
+     tilt:
+       image: "api"
+       workloads: { k8s: ["api"] }
+   ```
+
+3. Add the printed lines to the project's `Tiltfile` (create it if needed; the generated file includes it):
+
+   ```python
+   k8s_yaml("k8s.yaml")
+   k8s_resource("api", port_forwards=[3001])
+   ```
+
+Labels and `resource_deps` from the project graph are still added for you. If your Tiltfile already built the same image with `docker_build`/`custom_build`, remove that (see [Deploying your image](#deploying-your-image)).
 
 ## Templates
 
@@ -343,7 +399,8 @@ Blocks, in order:
 - `project_tiltfiles`
 - `moon_resource`: the `(moon)` resource
 - `resources`
-- `images`: container builds and deploys
+- `images`: container builds
+- `workloads`: decorations for [declared workloads](#workloads-your-tiltfiles-deploy)
 - `selection`: project selection
 - `footer`: empty by default
 
@@ -376,10 +433,11 @@ _MOON_GITIGNORE = {{ gitignore | moon_path }}
 | `tag` | The configured `tag`. |
 | `project_tiltfiles` | Workspace-relative project Tiltfiles to include. |
 | `resources` | Resources: `target`, `project`, `task`, `persistent`, `cmd`, `watch`, `only_inputs`, `ignore`, `respect_gitignore`, `resource_deps`, `labels`, `env`. |
-| `projects` | Every project: `id`, `source`, `tags`, `dependencies` (`id`, `scope`), `tiltfile` (if included), `resources` (targets), `selection` (what its ID selects). |
+| `projects` | Every project: `id`, `source`, `tags`, `dependencies` (`id`, `scope`), `tiltfile` (if included), `resources` (targets and workload names), `selection` (what its ID selects). |
 | `gitignore` | Ignore patterns translated from `.gitignore` files (rendered as `_MOON_GITIGNORE`). |
 | `gitignore_exceptions` | `!` patterns re-including gitignored paths that must stay watched. |
-| `images` | Images: `project`, `image_ref`, `dockerfile`, `command`, `watch`, `ignore`, `workload` (`name`, `manifests`, `port_forwards`, `resource_deps`, or none), `live_update` (`fall_back_on`, `syncs` with `local`/`remote`, `restart_entrypoint`, or none). |
+| `images` | Images: `project`, `image_ref`, `dockerfile`, `command`, `watch`, `ignore`, `live_update` (`fall_back_on`, `syncs` with `local`/`remote`, `restart_entrypoint`, or none). |
+| `workloads` | Declared workloads: `name`, `kind` (`k8s` or `compose`), `project`, `labels` (empty with `workloadLabels: "none"`), `resource_deps`. |
 | `restart_process` | Whether any image restarts after syncing (loads Tilt's `restart_process` extension). |
 | `config_files` | Files the generated file is derived from (watched by `(moon)`). |
 | `regenerate_cmd` | Command `(moon)` runs. |
@@ -408,6 +466,7 @@ In `.moon/extensions.yml`, next to `plugin`:
 | `includeUpstreamServices` | `true` | Expose upstream services even when they aren't tagged. |
 | `dependencyScopes` | `["production", "development", "peer"]` | Project dependency scopes treated as runtime relationships. |
 | `serviceRestart` | `"upstreamOutputs"` | When services restart: `upstreamOutputs`, `inputs`, or `never`. |
+| `workloadLabels` | `"project"` | Label added to [declared workloads](#workloads-your-tiltfiles-deploy): `project` (the project ID) or `none`. |
 | `watchInputs` | `true` | Watch files at all. When `false`, nothing re-runs on file changes. |
 | `globalGitignore` | `true` | Apply gitignore patterns to every Tilt resource (`watch_settings`), keeping paths moon needs watched. |
 | `includeProjectTiltfiles` | `true` | `include()` each project's own `Tiltfile` from the generated file. |
@@ -432,6 +491,6 @@ In a project's `moon.yml`, under `project.tilt` (moon's custom project metadata)
 | --- | --- |
 | `serviceRestart` | Overrides the workspace `serviceRestart` for this project (local services and Live Update restarts). |
 | `resources` | Extra Tilt resource names (e.g. from the project's own `Tiltfile`) that the project ID selects. |
-| `k8s` | Build this project's image and deploy it to Kubernetes: `ports`, `replicas`, `env`, `resources`, `readiness`. `{}` deploys with defaults. |
-| `image` | Image name (default: the project ID). On its own, builds the image without deploying it. |
+| `workloads` | Tilt resources the project's own Tiltfile deploys, by kind: `k8s` (YAML, kustomize, Helm, `helm_resource`) and `compose`. Containerizes the project. See [Workloads your Tiltfiles deploy](#workloads-your-tiltfiles-deploy). |
+| `image` | Build this project's image from moon's Dockerfile under this name (used verbatim, registry prefix included). Your own resources deploy it. |
 | `liveUpdate` | `false` rebuilds the image on every change instead of syncing. |

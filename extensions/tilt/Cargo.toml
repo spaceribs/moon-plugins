@@ -20,6 +20,7 @@ moon_pdk_api = { workspace = true }
 schematic = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_norway = { workspace = true }
 tera = { workspace = true }
 
 [dev-dependencies]

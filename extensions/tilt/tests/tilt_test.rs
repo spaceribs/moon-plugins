@@ -56,7 +56,7 @@ mod tilt_extension {
     mod generate {
         use super::*;
 
-        async fn create_plugin(sandbox: &MoonWasmSandbox) -> ExtensionTestWrapper {
+        pub async fn create_plugin(sandbox: &MoonWasmSandbox) -> ExtensionTestWrapper {
             create_fake_moon(sandbox);
 
             sandbox
@@ -120,6 +120,34 @@ mod tilt_extension {
             plugin.execute_extension(generate_args(&["--check"])).await;
         }
 
+        /// Rewrite the captured `moon query projects` output so `api` still
+        /// sets the removed `project.tilt.k8s`.
+        pub fn set_removed_k8s_settings(sandbox: &MoonWasmSandbox) {
+            let path = sandbox.path().join("projects.json");
+            let mut projects: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            let api = projects["projects"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|project| project["id"] == "api")
+                .unwrap();
+
+            api["config"]["project"] =
+                json!({ "metadata": { "tilt": { "k8s": { "ports": [3001] } } } });
+            std::fs::write(path, projects.to_string()).unwrap();
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        #[should_panic(expected = "export-k8s api")]
+        async fn fails_with_migration_guidance_for_k8s_settings() {
+            let sandbox = create_moon_sandbox("query");
+            set_removed_k8s_settings(&sandbox);
+            let plugin = create_plugin(&sandbox).await;
+
+            plugin.execute_extension(generate_args(&[])).await;
+        }
+
         #[tokio::test(flavor = "multi_thread")]
         #[should_panic(expected = "is out of date")]
         async fn check_fails_when_stale() {
@@ -128,6 +156,84 @@ mod tilt_extension {
             let plugin = create_plugin(&sandbox).await;
 
             plugin.execute_extension(generate_args(&["--check"])).await;
+        }
+    }
+
+    #[cfg(unix)]
+    mod export_k8s {
+        use super::*;
+
+        async fn export(sandbox: &MoonWasmSandbox, extra: &[&str]) {
+            let plugin = super::generate::create_plugin(sandbox).await;
+            let mut args = vec!["export-k8s".to_owned(), "api".to_owned()];
+            args.extend(extra.iter().map(|arg| arg.to_string()));
+
+            plugin
+                .execute_extension(ExecuteExtensionInput {
+                    args,
+                    ..Default::default()
+                })
+                .await;
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn writes_the_manifest_next_to_the_project() {
+            let sandbox = create_moon_sandbox("query");
+            super::generate::set_removed_k8s_settings(&sandbox);
+
+            export(&sandbox, &[]).await;
+
+            let manifest = std::fs::read_to_string(sandbox.path().join("api/k8s.yaml")).unwrap();
+
+            assert!(manifest.starts_with("apiVersion: apps/v1\nkind: Deployment\n"));
+            assert!(manifest.contains("kind: Service\n"));
+            assert!(manifest.contains("- containerPort: 3001\n"));
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn writes_to_a_custom_output_path() {
+            let sandbox = create_moon_sandbox("query");
+            super::generate::set_removed_k8s_settings(&sandbox);
+
+            export(&sandbox, &["--output", "deploy/k8s/api.yaml"]).await;
+
+            assert!(sandbox.path().join("deploy/k8s/api.yaml").is_file());
+            assert!(!sandbox.path().join("api/k8s.yaml").exists());
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        #[should_panic(expected = "already exists")]
+        async fn refuses_to_overwrite() {
+            let sandbox = create_moon_sandbox("query");
+            super::generate::set_removed_k8s_settings(&sandbox);
+            sandbox.create_file("api/k8s.yaml", "# mine\n");
+
+            export(&sandbox, &[]).await;
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn leaves_an_existing_file_unchanged() {
+            let sandbox = create_moon_sandbox("query");
+            super::generate::set_removed_k8s_settings(&sandbox);
+            sandbox.create_file("api/k8s.yaml", "# mine\n");
+            let plugin = super::generate::create_plugin(&sandbox).await;
+
+            let result = plugin
+                .plugin
+                .call_func_without_output(
+                    "execute_extension",
+                    ExecuteExtensionInput {
+                        args: vec!["export-k8s".into(), "api".into()],
+                        context: plugin.create_context(),
+                    },
+                )
+                .await;
+
+            assert!(result.is_err());
+            assert_eq!(
+                std::fs::read_to_string(sandbox.path().join("api/k8s.yaml")).unwrap(),
+                "# mine\n"
+            );
         }
     }
 
@@ -201,6 +307,21 @@ mod tilt_extension {
             let output = sync(&plugin, json!({ "sync": false })).await;
 
             assert!(output.skipped);
+            assert!(!sandbox.path().join("Tiltfile.moon").exists());
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn records_removed_k8s_settings_without_failing_the_pipeline() {
+            let sandbox = create_moon_sandbox("query");
+            create_fake_moon(&sandbox);
+            super::generate::set_removed_k8s_settings(&sandbox);
+            let plugin = sandbox.create_extension("tilt").await;
+
+            let output = sync(&plugin, json!({ "moonBin": "/workspace/fake-moon" })).await;
+            let error = output.operations[0].error.as_deref().unwrap_or_default();
+
+            assert_eq!(output.operations[0].status, OperationStatus::Failed);
+            assert!(error.contains("project.tilt.workloads"), "{error}");
             assert!(!sandbox.path().join("Tiltfile.moon").exists());
         }
 

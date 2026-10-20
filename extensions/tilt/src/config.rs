@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// When Tilt restarts a service (`serve_cmd`) resource.
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, schematic::Schematic)]
@@ -14,6 +14,17 @@ pub enum ServiceRestart {
     Inputs,
     /// Never restart on file changes.
     Never,
+}
+
+/// The label the extension adds to declared workloads (`project.tilt.workloads`).
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize, schematic::Schematic)]
+#[serde(rename_all = "camelCase")]
+pub enum WorkloadLabels {
+    /// Label each workload with its project ID, like local resources.
+    #[default]
+    Project,
+    /// Add no label, leaving the labels set by the project's own Tiltfile.
+    None,
 }
 
 /// Settings for the Tilt extension, configured in `.moon/extensions.yml`.
@@ -64,7 +75,7 @@ pub struct TiltExtensionConfig {
     pub watch_config: bool,
 
     /// Build container images from moon's generated Dockerfiles for projects
-    /// that opt in with `project.tilt.k8s` or `project.tilt.image`.
+    /// that opt in with `project.tilt.image`.
     pub images: bool,
 
     /// Binary used to build images.
@@ -87,6 +98,11 @@ pub struct TiltExtensionConfig {
     /// When to restart services. Override per project with
     /// `project.metadata.tilt.serviceRestart` in moon.yml.
     pub service_restart: ServiceRestart,
+
+    /// The label added to the workloads projects declare in
+    /// `project.tilt.workloads`: `project` (their project ID) or `none`, for
+    /// Tiltfiles that already label their workloads.
+    pub workload_labels: WorkloadLabels,
 
     /// Workspace-relative path of a custom Tera template used to render the
     /// generated file, instead of the built-in one. Custom templates can
@@ -129,6 +145,7 @@ impl Default for TiltExtensionConfig {
             image_workdir: "/app".into(),
             select_by_project: true,
             service_restart: ServiceRestart::default(),
+            workload_labels: WorkloadLabels::default(),
             template: None,
             output: "Tiltfile.moon".into(),
             tiltfile: "Tiltfile".into(),
@@ -136,5 +153,31 @@ impl Default for TiltExtensionConfig {
             moon_bin: "moon".into(),
             tilt_bin: "tilt".into(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(json: &str) -> TiltExtensionConfig {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn workload_labels_default_to_project() {
+        assert_eq!(parse("{}").workload_labels, WorkloadLabels::Project);
+    }
+
+    #[test]
+    fn parses_workload_labels() {
+        assert_eq!(
+            parse(r#"{ "workloadLabels": "project" }"#).workload_labels,
+            WorkloadLabels::Project
+        );
+        assert_eq!(
+            parse(r#"{ "workloadLabels": "none" }"#).workload_labels,
+            WorkloadLabels::None
+        );
     }
 }

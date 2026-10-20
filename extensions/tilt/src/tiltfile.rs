@@ -6,6 +6,9 @@ use crate::config::{ServiceRestart, TiltExtensionConfig};
 use crate::query::{QueryProjectsOutput, QueryTask, QueryTasksOutput};
 use crate::template::{self, TemplateContext, TemplateProject, TemplateProjectDependency};
 use crate::watch::WatchRules;
+use crate::workloads::{
+    DeclaredWorkloads, DecoratedWorkload, declared_workloads, decorate_workloads,
+};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -51,55 +54,70 @@ pub fn plan_resources(
     tasks: &QueryTasksOutput,
     config: &TiltExtensionConfig,
 ) -> Vec<Resource> {
-    plan(projects, tasks, config, &BTreeSet::new()).resources
+    plan(projects, tasks, config, &BTreeMap::new()).resources
 }
 
-/// Plan local resources and container images together: projects whose
-/// image is deployed to Kubernetes are containerized, so their tasks don't run
-/// on the host and their workload joins the dependency graph.
+/// Plan local resources, container images, and workload decorations together.
+/// Projects with workloads (declared in `project.tilt.workloads`) are
+/// containerized: their services don't run on the host, and their workloads
+/// join the dependency graph.
 pub fn plan_with_images(
     projects: &QueryProjectsOutput,
     tasks: &QueryTasksOutput,
     config: &TiltExtensionConfig,
     config_files: &[String],
-) -> (Vec<Resource>, Vec<crate::images::Image>) {
+) -> (
+    Vec<Resource>,
+    Vec<crate::images::Image>,
+    Vec<DecoratedWorkload>,
+) {
     let mut images = crate::images::plan_images(projects, tasks, config, config_files);
-    let containerized: BTreeSet<String> = images
+    let containerized: BTreeMap<String, DeclaredWorkloads> = projects
+        .projects
         .iter()
-        .filter(|image| image.workload.is_some())
-        .map(|image| image.project.clone())
+        .map(|project| (project.id.clone(), declared_workloads(project)))
+        .filter(|(_, workloads)| !workloads.is_empty())
         .collect();
-    let plan = plan(projects, tasks, config, &containerized);
 
+    // Tilt can't override the entrypoint of images that only Compose deploys,
+    // so restart their containers instead of the process.
     for image in &mut images {
-        if let Some(workload) = &mut image.workload {
-            workload.resource_deps = plan
-                .workload_deps
-                .get(&image.project)
-                .cloned()
-                .unwrap_or_default();
+        let compose_only = containerized
+            .get(&image.project)
+            .is_some_and(|workloads| workloads.k8s.is_empty());
+
+        if let Some(live_update) = image.live_update.as_mut().filter(|_| compose_only)
+            && live_update.restart_entrypoint.take().is_some()
+        {
+            live_update.restart_container = true;
         }
     }
 
-    (plan.resources, images)
+    let plan = plan(projects, tasks, config, &containerized);
+
+    let workloads = decorate_workloads(projects, &plan.workload_deps, config.workload_labels);
+
+    (plan.resources, images, workloads)
 }
 
 /// Resources, plus `resource_deps` for containerized projects' workloads.
 #[derive(Debug, Default)]
 pub struct Plan {
     pub resources: Vec<Resource>,
-    /// Workload (project ID) -> upstream resources from the project graph.
+    /// Containerized project ID -> upstream resources that each of its
+    /// workloads waits on, from the project graph.
     pub workload_deps: BTreeMap<String, Vec<String>>,
 }
 
-/// Like [`plan_resources`], where `containerized` projects run as Kubernetes
-/// workloads (named after the project): their tasks aren't local resources,
-/// and their workload stands in as their service in the project graph.
+/// Like [`plan_resources`], where `containerized` projects run as the workloads
+/// they declare: their workloads stand in as their services in the project
+/// graph, and their tasks aren't local resources, except non-persistent tasks
+/// that carry the tag themselves (build steps) and those tasks' dependencies.
 pub fn plan(
     projects: &QueryProjectsOutput,
     tasks: &QueryTasksOutput,
     config: &TiltExtensionConfig,
-    containerized: &BTreeSet<String>,
+    containerized: &BTreeMap<String, DeclaredWorkloads>,
 ) -> Plan {
     let tagged_projects: BTreeSet<&str> = projects
         .projects
@@ -134,12 +152,14 @@ pub fn plan(
     let mut services: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
 
     for (project_id, project_tasks) in &tasks.tasks {
-        // The container runs the project; its tasks don't run on the host.
-        if containerized.contains(project_id) {
-            continue;
-        }
+        let is_containerized = containerized.contains_key(project_id);
 
         for task in project_tasks.values() {
+            // The workload runs the project; its services don't run on the host.
+            if is_containerized && task.options.persistent {
+                continue;
+            }
+
             by_target.insert(task.target.as_str(), (project_id.as_str(), task));
 
             if is_service(task) {
@@ -151,9 +171,15 @@ pub fn plan(
         }
     }
 
-    for id in projects_by_id.keys() {
-        if containerized.contains(*id) {
-            services.insert(id, vec![id]);
+    // A containerized project's services are its declared workloads.
+    let workload_names: BTreeSet<&str> = containerized
+        .values()
+        .flat_map(|workloads| workloads.names())
+        .collect();
+
+    for (id, workloads) in containerized {
+        if let Some((id, _)) = projects_by_id.get_key_value(id.as_str()) {
+            services.insert(id, workloads.names().collect());
         }
     }
 
@@ -164,6 +190,7 @@ pub fn plan(
                 return false;
             }
 
+            // Only build steps tagged themselves run for containerized projects.
             task.tags.iter().any(|tag| tag == &config.tag)
                 || (is_service(task)
                     && (config.include_persistent || tagged_projects.contains(project_id)))
@@ -175,7 +202,7 @@ pub fn plan(
     if config.link_project_dependencies && config.include_upstream_services {
         for id in projects_by_id
             .keys()
-            .filter(|id| containerized.contains(**id))
+            .filter(|id| containerized.contains_key(**id))
         {
             queue.extend(upstream_services(id, &project_deps, |dep_id| {
                 services.get(dep_id).cloned().unwrap_or_default()
@@ -246,7 +273,7 @@ pub fn plan(
                         .into_iter()
                         .flatten()
                         .filter(|target| {
-                            selected.contains(*target) || containerized.contains(**target)
+                            selected.contains(*target) || workload_names.contains(*target)
                         })
                         .copied()
                         .collect()
@@ -309,7 +336,7 @@ pub fn plan(
 
     let workload_deps = projects_by_id
         .keys()
-        .filter(|id| containerized.contains(**id))
+        .filter(|id| containerized.contains_key(**id))
         .map(|id| {
             let deps = if config.link_project_dependencies {
                 upstream_services(id, &project_deps, |dep_id| {
@@ -318,7 +345,7 @@ pub fn plan(
                         .into_iter()
                         .flatten()
                         .filter(|target| {
-                            selected.contains(*target) || containerized.contains(**target)
+                            selected.contains(*target) || workload_names.contains(*target)
                         })
                         .copied()
                         .collect()
@@ -511,6 +538,8 @@ pub struct RenderInput<'a> {
     pub extension_id: &'a str,
     /// Container images to build.
     pub images: &'a [crate::images::Image],
+    /// Workloads deployed by project Tiltfiles, to decorate.
+    pub workloads: &'a [DecoratedWorkload],
     pub version: &'a str,
     pub custom_template: Option<&'a str>,
 }
@@ -529,6 +558,7 @@ impl<'a> RenderInput<'a> {
             config_files: &[],
             extension_id: "tilt",
             images: &[],
+            workloads: &[],
             version,
             custom_template: None,
         }
@@ -591,13 +621,7 @@ pub fn render(input: &RenderInput, config: &TiltExtensionConfig) -> Result<Strin
                 .iter()
                 .filter(|resource| resource.project == project.id)
                 .map(|resource| resource.target.clone())
-                .chain(
-                    input
-                        .images
-                        .iter()
-                        .filter(|image| image.project == project.id)
-                        .filter_map(|image| Some(image.workload.as_ref()?.name.clone())),
-                )
+                .chain(declared_workloads(project).names().map(String::from))
                 .collect();
 
             TemplateProject {
@@ -627,7 +651,12 @@ pub fn render(input: &RenderInput, config: &TiltExtensionConfig) -> Result<Strin
                             .flatten()
                             .filter_map(|value| value.as_str().map(String::from)),
                     )
-                    .collect(),
+                    .fold(vec![], |mut selection, name| {
+                        if !selection.contains(&name) {
+                            selection.push(name);
+                        }
+                        selection
+                    }),
             }
         })
         .collect();
@@ -663,6 +692,7 @@ pub fn render(input: &RenderInput, config: &TiltExtensionConfig) -> Result<Strin
             resources,
             projects,
             images: input.images,
+            workloads: input.workloads,
             restart_process: input.images.iter().any(|image| {
                 image
                     .live_update
@@ -1051,6 +1081,37 @@ mod tests {
     }
 
     #[test]
+    fn selects_declared_workloads_by_project() {
+        let (mut projects, tasks) = fixture();
+        let api = projects
+            .projects
+            .iter_mut()
+            .find(|p| p.id == "api")
+            .unwrap();
+
+        // Listing a workload in `project.tilt.resources` too doesn't repeat it.
+        api.config.project = Some(crate::query::QueryProjectMetadata {
+            metadata: serde_json::from_str(
+                r#"{ "tilt": { "workloads": { "k8s": ["api", "api-worker"] }, "resources": ["api"] } }"#,
+            )
+            .unwrap(),
+        });
+
+        let config = TiltExtensionConfig::default();
+        let (resources, images, _) = plan_with_images(&projects, &tasks, &config, &[]);
+        let output = render(
+            &RenderInput {
+                images: &images,
+                ..RenderInput::new(&resources, &projects, "0.0.0")
+            },
+            &config,
+        )
+        .unwrap();
+
+        assert!(output.contains("    \"api\": [\"api\", \"api-worker\"],\n"));
+    }
+
+    #[test]
     fn computes_gitignore_exceptions() {
         let (projects, mut tasks) = fixture();
 
@@ -1154,12 +1215,12 @@ _MOON_GITIGNORE = {{ gitignore | moon_path }}
         let resources = plan_resources(&projects, &tasks, &config);
         let images = [crate::images::Image {
             project: "web".into(),
-            image_ref: "web".into(),
+            // Registry prefixes are kept verbatim as the `custom_build` ref.
+            image_ref: "tilt.dev/web".into(),
             dockerfile: ".moon/cache/tilt/web.Dockerfile".into(),
             command: "moon docker file web ../.moon/cache/tilt/web.Dockerfile --defaults && docker build -t $EXPECTED_REF -f .moon/cache/tilt/web.Dockerfile .".into(),
             watch: vec!["web".into()],
             ignore: vec!["web/generated/**/*".into()],
-            workload: None,
             live_update: None,
         }];
         let output = render(
@@ -1174,32 +1235,233 @@ _MOON_GITIGNORE = {{ gitignore | moon_path }}
         assert!(output.contains("config.define_string_list(\"to-edit\""));
         assert!(output.contains("_moon_cfg = config.parse()\n"));
         assert!(output.contains(
-            "if _moon_edit(\"web\"):\n    custom_build(\n        \"web\",\n        \"moon docker file web ../.moon/cache/tilt/web.Dockerfile --defaults && docker build -t $EXPECTED_REF -f .moon/cache/tilt/web.Dockerfile .\",\n        deps = [_moon_path(\"web\")],\n        ignore = [_moon_path(\"web/generated/**/*\")],\n        dir = _MOON_ROOT,\n        env = _MOON_ENV,\n    )\n"
+            "if _moon_edit(\"web\"):\n    custom_build(\n        \"tilt.dev/web\",\n        \"moon docker file web ../.moon/cache/tilt/web.Dockerfile --defaults && docker build -t $EXPECTED_REF -f .moon/cache/tilt/web.Dockerfile .\",\n        deps = [_moon_path(\"web\")],\n        ignore = [_moon_path(\"web/generated/**/*\")],\n        dir = _MOON_ROOT,\n        env = _MOON_ENV,\n    )\n"
         ));
         assert!(output.contains("for _moon_name in _moon_cfg.get(\"to-run\", []):"));
+    }
+
+    #[test]
+    fn compose_deployed_images_restart_their_container() {
+        let (mut projects, tasks) = fixture();
+        let api = projects
+            .projects
+            .iter_mut()
+            .find(|p| p.id == "api")
+            .unwrap();
+
+        api.config
+            .docker
+            .file
+            .insert("startTask".into(), "serve".into());
+        api.config.project = Some(crate::query::QueryProjectMetadata {
+            metadata: serde_json::from_str(
+                r#"{ "tilt": { "image": "api", "serviceRestart": "inputs", "workloads": { "compose": ["api"] } } }"#,
+            )
+            .unwrap(),
+        });
+
+        let config = TiltExtensionConfig::default();
+        let (resources, images, workloads) = plan_with_images(&projects, &tasks, &config, &[]);
+        let live_update = images[0].live_update.as_ref().unwrap();
+
+        assert_eq!(live_update.restart_entrypoint, None);
+        assert!(live_update.restart_container);
+
+        let output = render(
+            &RenderInput {
+                images: &images,
+                workloads: &workloads,
+                ..RenderInput::new(&resources, &projects, "0.0.0")
+            },
+            &config,
+        )
+        .unwrap();
+
+        assert!(output.contains("    custom_build(\n        \"api\",\n"));
+        assert!(!output.contains("restart_process"));
+        assert!(!output.contains("entrypoint"));
+        assert!(output.contains("            restart_container(),\n        ],\n"));
+
+        // Kubernetes workloads keep restarting the process.
+        let api = projects
+            .projects
+            .iter_mut()
+            .find(|p| p.id == "api")
+            .unwrap();
+        api.config.project = Some(crate::query::QueryProjectMetadata {
+            metadata: serde_json::from_str(
+                r#"{ "tilt": { "image": "api", "serviceRestart": "inputs", "workloads": { "k8s": ["api"] } } }"#,
+            )
+            .unwrap(),
+        });
+
+        let (_, images, _) = plan_with_images(&projects, &tasks, &config, &[]);
+        let live_update = images[0].live_update.as_ref().unwrap();
+
+        assert!(live_update.restart_entrypoint.is_some());
+        assert!(!live_update.restart_container);
+    }
+
+    #[test]
+    fn images_build_without_deploying() {
+        let (mut projects, tasks) = fixture();
+        let api = projects
+            .projects
+            .iter_mut()
+            .find(|p| p.id == "api")
+            .unwrap();
+
+        api.config.project = Some(crate::query::QueryProjectMetadata {
+            metadata: serde_json::from_str(r#"{ "tilt": { "image": "tilt.dev/api" } }"#).unwrap(),
+        });
+
+        let config = TiltExtensionConfig::default();
+        let (resources, images, workloads) = plan_with_images(&projects, &tasks, &config, &[]);
+        let output = render(
+            &RenderInput {
+                images: &images,
+                workloads: &workloads,
+                ..RenderInput::new(&resources, &projects, "0.0.0")
+            },
+            &config,
+        )
+        .unwrap();
+
+        assert!(output.contains("    custom_build(\n        \"tilt.dev/api\",\n"));
+        assert!(!output.contains("k8s_yaml"));
+        assert!(!output.contains("k8s_resource"));
+        // An image alone doesn't containerize: api's services still run locally.
+        assert!(targets(&resources).contains(&"api:serve"));
+    }
+
+    fn k8s(project: &str, names: &[&str]) -> BTreeMap<String, DeclaredWorkloads> {
+        BTreeMap::from([(
+            project.to_owned(),
+            DeclaredWorkloads {
+                k8s: names.iter().map(|name| name.to_string()).collect(),
+                ..Default::default()
+            },
+        )])
     }
 
     #[test]
     fn containerized_projects_run_as_workloads_in_the_graph() {
         let (projects, tasks) = fixture();
         let config = TiltExtensionConfig::default();
-        let containerized = BTreeSet::from(["api".to_owned()]);
-        let plan = plan(&projects, &tasks, &config, &containerized);
+        let plan = plan(
+            &projects,
+            &tasks,
+            &config,
+            &k8s("api", &["api", "api-worker"]),
+        );
 
-        // api's tasks don't run on the host...
+        // api's tasks don't run on the host, even api:serve, which is tagged
+        // itself: the workloads replace it...
         assert!(
             !targets(&plan.resources)
                 .iter()
                 .any(|t| t.starts_with("api:"))
         );
-        // ...its workload stands in as its service for dependents...
+        // ...every workload stands in as its service for dependents...
         assert_eq!(
             resource(&plan.resources, "web:dev").resource_deps,
-            ["api", "web:codegen"]
+            ["api", "api-worker", "web:codegen"]
         );
-        // ...and it waits on its own upstream services, which are pulled in.
+        // ...and they wait on their own upstream services, which are pulled in.
         assert_eq!(plan.workload_deps.get("api").unwrap(), &["db:serve"]);
         assert!(targets(&plan.resources).contains(&"db:serve"));
+    }
+
+    #[test]
+    fn tagged_project_with_workloads_has_no_local_resources() {
+        let (projects, tasks) = fixture();
+        let config = TiltExtensionConfig::default();
+        let plan = plan(&projects, &tasks, &config, &k8s("web", &["web"]));
+
+        // web is tagged, but its server and the build step it pulled in are gone.
+        assert!(
+            !targets(&plan.resources)
+                .iter()
+                .any(|t| t.starts_with("web:"))
+        );
+        assert_eq!(plan.workload_deps.get("web").unwrap(), &["api:serve"]);
+    }
+
+    #[test]
+    fn task_tagged_build_steps_still_run_for_containerized_projects() {
+        let (projects, mut tasks) = fixture();
+        let config = TiltExtensionConfig::default();
+        let codegen = tasks
+            .tasks
+            .get_mut("web")
+            .and_then(|tasks| tasks.get_mut("codegen"))
+            .unwrap();
+        codegen.tags.push(config.tag.clone());
+        let plan = plan(&projects, &tasks, &config, &k8s("web", &["web"]));
+        let resources = targets(&plan.resources);
+
+        assert!(resources.contains(&"web:codegen"));
+        assert!(!resources.contains(&"web:dev"));
+        assert!(!resources.contains(&"web:lint"));
+    }
+
+    fn render_workloads(config: &TiltExtensionConfig) -> String {
+        let (mut projects, tasks) = fixture();
+        let api = projects
+            .projects
+            .iter_mut()
+            .find(|p| p.id == "api")
+            .unwrap();
+
+        api.config.project = Some(crate::query::QueryProjectMetadata {
+            metadata: serde_json::from_str(
+                r#"{ "tilt": { "workloads": { "k8s": ["api"], "compose": ["api-cache"] } } }"#,
+            )
+            .unwrap(),
+        });
+
+        let (resources, images, workloads) = plan_with_images(&projects, &tasks, config, &[]);
+
+        render(
+            &RenderInput {
+                images: &images,
+                workloads: &workloads,
+                ..RenderInput::new(&resources, &projects, "0.0.0")
+            },
+            config,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn renders_workload_decorations() {
+        let output = render_workloads(&TiltExtensionConfig::default());
+
+        assert!(output.contains(
+            "k8s_resource(\n    \"api\",\n    labels = [\"api\"],\n    resource_deps = [\"db:serve\"],\n)\n"
+        ));
+        assert!(output.contains(
+            "dc_resource(\n    \"api-cache\",\n    labels = [\"api\"],\n    resource_deps = [\"db:serve\"],\n)\n"
+        ));
+        // Decorations only: nothing is deployed for them.
+        assert!(!output.contains("k8s_yaml"));
+        assert!(!output.contains("docker_compose"));
+    }
+
+    #[test]
+    fn workload_labels_can_be_left_to_project_tiltfiles() {
+        let output = render_workloads(&TiltExtensionConfig {
+            workload_labels: crate::config::WorkloadLabels::None,
+            ..Default::default()
+        });
+
+        assert!(
+            output
+                .contains("k8s_resource(\n    \"api\",\n    resource_deps = [\"db:serve\"],\n)\n")
+        );
+        assert!(output.contains(
+            "dc_resource(\n    \"api-cache\",\n    resource_deps = [\"db:serve\"],\n)\n"
+        ));
     }
 
     #[test]
