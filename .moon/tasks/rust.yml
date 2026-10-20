@@ -12,6 +12,8 @@ fileGroups:
     - "/rust-toolchain.toml"
   sources:
     - "src/**/*"
+    # Embedded with `include_str!`, e.g. the Tilt extension's Tera templates.
+    - "templates/**/*"
   tests:
     - "tests/**/*"
 
