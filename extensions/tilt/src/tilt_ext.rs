@@ -322,8 +322,7 @@ fn render_generated(root: &VirtualPath, config: &TiltExtensionConfig) -> AnyResu
         tiltfile::find_project_tiltfiles(&projects, config, |path| root.join(path).is_file());
     let gitignore = load_gitignore(root, &projects);
     let config_files = find_config_files(root, &projects, config);
-    let (resources, images, workloads) =
-        tiltfile::plan_with_images(&projects, &tasks, config, &config_files);
+    let planned = tiltfile::plan_with_images(&projects, &tasks, config, &config_files);
     let extension_id = get_plugin_id()?;
     let contents = tiltfile::render(
         &tiltfile::RenderInput {
@@ -331,10 +330,11 @@ fn render_generated(root: &VirtualPath, config: &TiltExtensionConfig) -> AnyResu
             gitignore: &gitignore,
             config_files: &config_files,
             extension_id: extension_id.as_str(),
-            images: &images,
-            workloads: &workloads,
+            images: &planned.images,
+            workloads: &planned.workloads,
+            excluded: &planned.excluded,
             custom_template: custom_template.as_deref(),
-            ..tiltfile::RenderInput::new(&resources, &projects, env!("CARGO_PKG_VERSION"))
+            ..tiltfile::RenderInput::new(&planned.resources, &projects, env!("CARGO_PKG_VERSION"))
         },
         config,
     )
@@ -347,7 +347,7 @@ fn render_generated(root: &VirtualPath, config: &TiltExtensionConfig) -> AnyResu
 
     Ok(Rendered {
         contents,
-        resources: resources.len(),
+        resources: planned.resources.len(),
         project_tiltfiles: project_tiltfiles.len(),
     })
 }
