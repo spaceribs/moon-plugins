@@ -45,6 +45,13 @@ moon run :test                    # native unit tests + WASM integration tests
 moon run :lint root:format        # clippy (-D warnings) + rustfmt
 ```
 
+**On macOS**, point Cargo at LLVM's archiver for wasm builds first. Apple's `ar` can't index the precompiled wasm object that `psm` (a dependency of moon's config parser and Tera) ships, so linking fails with `undefined symbol: rust_psm_stack_pointer`:
+
+```sh
+rustup component add llvm-tools
+export AR_wasm32_wasip1="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin/llvm-ar"
+```
+
 Integration tests load the built `.wasm` into a sandboxed host via `moon_pdk_test_utils` / `proto_pdk_test_utils`, which is why `test` depends on `build`. The harness looks in `target/wasm32-wasip1/release` before `debug`. So if you run `cargo test` by hand, rebuild with `--release` first, or a stale release build will be tested. Some tool tests download real Tilt releases.
 
 ### Trying a plugin locally

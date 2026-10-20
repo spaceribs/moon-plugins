@@ -26,17 +26,30 @@ jobs:
       - uses: moonrepo/setup-rust@v1
         with:
           cache: false
-          components: clippy, rustfmt
+          components: clippy, rustfmt, llvm-tools
           targets: wasm32-wasip1
+      # `psm` (via `pest`, used by moon's config and Tera) ships a precompiled
+      # wasm object that `cc` archives with `ar`. Apple's `ar` can't index wasm
+      # objects, so linking fails with `undefined symbol: rust_psm_stack_pointer`.
+      # Use rustup's llvm-ar for wasm targets instead.
+      - if: runner.os == 'macOS'
+        run: |
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          echo "AR_wasm32_wasip1=$(rustc --print sysroot)/lib/rustlib/$host/bin/llvm-ar" >> "$GITHUB_ENV"
       - uses: moonrepo/setup-toolchain@v0
         with:
           auto-install: true
-      # Pull requests run what their changes affect. main runs everything, so
-      # it never passes by testing nothing (e.g. a first push has no base).
-      - if: github.event_name == 'pull_request'
-        run: moon ci --color
-      - if: github.event_name == 'push'
-        run: moon run :lint :test root:format root:openspec --color
+      # Pull requests run what their changes affect. main, and pull requests
+      # that change CI itself (which no moon task takes as an input), run
+      # everything, so they never pass by testing nothing.
+      - name: Run checks
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ] && git diff --quiet \
+            "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" -- .github/; then
+            moon ci --color
+          else
+            moon run :lint :test root:format root:openspec --color
+          fi
 
   commits:
     name: Commit messages
