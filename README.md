@@ -63,17 +63,40 @@ tilt:
 
 1. Create `extensions/<name>`, `toolchains/<name>`, or `tools/<name>`. Copy the Tilt crate as a template: `crate-type = ["cdylib", "lib"]` and a `wasm` default feature.
 2. Register it in `.moon/workspace.yml`. Cargo picks it up automatically through the workspace globs.
-3. Add `CHANGELOG.md` with an `## Unreleased` heading.
+3. Add a `CHANGELOG.md` with a `# Changelog` heading. release-plz adds a section for each release.
+
+## Commit messages
+
+Commits follow [Conventional Commits](https://www.conventionalcommits.org), because they decide each plugin's next version and changelog:
+
+```
+<type>(<scope>)!: <subject>
+
+feat(tilt): add readiness probes
+fix(tilt_tool): handle musl on arm
+docs: explain Live Update
+feat(tilt)!: make container deploys opt-in
+```
+
+| Type | Releases? |
+| --- | --- |
+| `feat` | minor version (0.1.0 → 0.2.0) |
+| `fix`, `perf` | patch version (0.1.0 → 0.1.1) |
+| any type with `!` (or a `BREAKING CHANGE:` footer) | breaking change |
+| `docs`, `chore`, `ci`, `build`, `refactor`, `style`, `test`, `revert` | no release on their own |
+
+A commit releases the plugins whose files it changes. The scope is free-form, but naming the plugin (`tilt`, `tilt_tool`, `tilt_toolchain`) keeps the changelogs readable. Changes to `tilt_tool` also release `tilt_toolchain`, which bundles it.
+
+Messages are checked by a `commit-msg` hook ([`scripts/commit-lint.sh`](./scripts/commit-lint.sh)). moon installs it whenever it runs a task, or run `moon sync hooks` once. CI checks every commit in pull requests and pushes too.
 
 ## Releasing
 
-Releases are per plugin and driven by tags:
+Releases are automated with [release-plz](https://release-plz.dev) ([`release-plz.toml`](./release-plz.toml)):
 
-1. Bump `version` in the crate's `Cargo.toml` and rename `## Unreleased` in its `CHANGELOG.md`.
-2. Tag `<crate>-v<version>` and push the tag:
-   ```sh
-   git tag tilt_extension-v0.1.0 && git push origin tilt_extension-v0.1.0
-   ```
-3. [`release.yml`](./.github/workflows/release.yml) uses [`moonrepo/build-wasm-plugin`](https://github.com/moonrepo/build-wasm-plugin) to build, `wasm-opt`, strip, and checksum the plugin. It attaches the result to a GitHub release and publishes it to ghcr.io.
+1. **On every push to `main`**, release-plz opens or updates a **release PR**. It bumps the version and changelog of every plugin with releasable commits since its last release.
+2. **Merging the release PR** tags each bumped plugin (`<crate>-v<version>`, e.g. `tilt_extension-v0.2.0`), then dispatches [`release.yml`](./.github/workflows/release.yml) for each tag.
+3. **`release.yml`** uses [`moonrepo/build-wasm-plugin`](https://github.com/moonrepo/build-wasm-plugin) to build, `wasm-opt`, strip, and checksum the plugin. It creates the GitHub release with the `.wasm` attached and the changelog entry as notes, and publishes to ghcr.io.
+
+The release PR is opened with GitHub Actions' token, so CI doesn't run on it automatically. It only changes versions and changelogs, which were already tested on `main`. To release by hand instead, push a tag yourself (`git tag tilt_tool-v0.1.2 && git push origin tilt_tool-v0.1.2`) after bumping the version and changelog.
 
 Consumers then reference it with a `github://` locator ([see above](#using-the-plugins)). A pinned locator uses the full release tag (`tilt_extension@tilt_extension-v0.1.0`), because moon looks the tag up verbatim.

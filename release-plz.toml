@@ -1,0 +1,24 @@
+# Automated versioning and releases: https://release-plz.dev/docs/config
+#
+# On every push to main, release-plz opens (or updates) a release PR that bumps
+# the version and changelog of each plugin changed since its last release,
+# based on Conventional Commits. Merging that PR tags each released plugin
+# (`<crate>-v<version>`), and `.github/workflows/release.yml` builds and
+# publishes its `.wasm`.
+
+[workspace]
+# The plugins aren't on crates.io: versions come from git tags, and releasing
+# means tagging.
+git_only = true
+git_tag_name = "{{ package }}-v{{ version }}"
+# release.yml creates the GitHub release, with the built `.wasm` attached.
+git_release_enable = false
+# Only release from merged release PRs.
+release_always = false
+# Only features, fixes, performance, and breaking changes warrant a release
+# (not docs, chores, CI, ...).
+release_commits = "^((feat|fix|perf)(\\(.*\\))?!?|\\w+(\\(.*\\))?!):"
+# `feat` bumps the minor version even before 1.0 (0.1.0 -> 0.2.0).
+features_always_increment_minor = true
+# WASM plugins have no Rust API for cargo-semver-checks to compare.
+semver_check = false

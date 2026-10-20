@@ -1,11 +1,14 @@
 name: Release
 
-# Push a tag named `<crate>-v<version>` (e.g. `tilt_extension-v0.1.0`) to
-# build, optimize, and attach that plugin's .wasm to a GitHub release.
+# Builds, optimizes, and attaches a plugin's .wasm to a GitHub release for a tag
+# named `<crate>-v<version>` (e.g. `tilt_extension-v0.1.0`). Tags come from
+# release-plz (release-plz.yml dispatches this workflow for each), or can be
+# pushed by hand. Pull requests only check that everything builds.
 on:
   push:
     tags:
       - "**[0-9]+.[0-9]+.[0-9]+*"
+  workflow_dispatch:
   pull_request:
 
 permissions:
@@ -28,10 +31,10 @@ jobs:
       - id: build
         uses: moonrepo/build-wasm-plugin@v0
         with:
-          publish: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
+          publish: ${{ github.ref_type == 'tag' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - if: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
+      - if: ${{ github.ref_type == 'tag' }}
         uses: ncipollo/release-action@v1
         with:
           artifacts: builds/*

@@ -4,3 +4,4 @@
 .moon/docker
 *.wasm
 !tests/__fixtures__/**/*.wasm
+.moon/hooks

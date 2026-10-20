@@ -31,4 +31,29 @@ jobs:
       - uses: moonrepo/setup-toolchain@v0
         with:
           auto-install: true
-      - run: moon ci --color
+      # Pull requests run what their changes affect. main runs everything, so
+      # it never passes by testing nothing (e.g. a first push has no base).
+      - if: github.event_name == 'pull_request'
+        run: moon ci --color
+      - if: github.event_name == 'push'
+        run: moon run :lint :test root:format --color
+
+  commits:
+    name: Commit messages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # Conventional Commits drive release-plz's versions and changelogs.
+      - name: Lint commit messages
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            range="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            # New branch: nothing to compare against.
+            exit 0
+          else
+            range="${{ github.event.before }}..${{ github.sha }}"
+          fi
+          sh scripts/commit-lint.sh --range "$range"

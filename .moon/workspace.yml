@@ -12,6 +12,12 @@ projects:
 vcs:
   client: "git"
   defaultBranch: "main"
+  # Commit messages must follow Conventional Commits, which release-plz uses to
+  # version the plugins. moon installs the hook whenever it runs a task.
+  hooks:
+    commit-msg:
+      - "sh scripts/commit-lint.sh $ARG1"
+  sync: true
 
 pipeline:
   logRunningCommand: true

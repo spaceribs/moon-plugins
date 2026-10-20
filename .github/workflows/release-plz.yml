@@ -1,0 +1,65 @@
+name: Release PR
+
+# Opens a release PR from Conventional Commits, and tags plugins when it's merged.
+# See release-plz.toml.
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  # Tags plugins whose version was bumped by a merged release PR, then
+  # dispatches release.yml for each tag. (Tags pushed with GITHUB_TOKEN don't
+  # trigger `push` workflows, but `workflow_dispatch` is allowed.)
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: moonrepo/setup-rust@v1
+        with:
+          cache: false
+      - id: release-plz
+        uses: release-plz/action@v0.5.143
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - if: steps.release-plz.outputs.releases_created == 'true'
+        run: |
+          for tag in $(echo "$RELEASES" | jq -r '.[].tag'); do
+            echo "Building and publishing $tag"
+            gh workflow run release.yml --ref "$tag"
+          done
+        env:
+          RELEASES: ${{ steps.release-plz.outputs.releases }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-pr:
+    name: Release PR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: release-plz-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: moonrepo/setup-rust@v1
+        with:
+          cache: false
+      - uses: release-plz/action@v0.5.143
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
