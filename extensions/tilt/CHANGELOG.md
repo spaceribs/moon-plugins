@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.0](https://github.com/spaceribs/moon-plugins/compare/tilt_extension-v0.2.0...tilt_extension-v0.3.0) - 2026-10-21
+
+### Added
+
+- *(tilt)* support native Windows for the core extension and toolchain
+
+### Fixed
+
+- *(tilt)* run resources with moon exec so persistent tasks run in CI
+- *(tilt)* run the toolchain's installed Tilt instead of relying on PATH and proto shims
+- *(tilt)* exclude tasks that depend on a task running Tilt
+
+### Other
+
+- cache dependency builds and moon's task cache, and lint on Linux only
+
 ## [0.2.0](https://github.com/spaceribs/moon-plugins/compare/tilt_extension-v0.1.0...tilt_extension-v0.2.0) - 2026-10-20
 
 ### Added
