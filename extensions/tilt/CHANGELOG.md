@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.0](https://github.com/spaceribs/moon-plugins/compare/tilt_extension-v0.3.0...tilt_extension-v0.4.0) - 2026-10-21
+
+### Added
+
+- *(tilt)* declare runtime-only project dependencies with project.tilt.dependsOn
+
+### Fixed
+
+- *(tilt)* watch every explicit task input an image falls back on
+
 ## [0.3.0](https://github.com/spaceribs/moon-plugins/compare/tilt_extension-v0.2.0...tilt_extension-v0.3.0) - 2026-10-21
 
 ### Added
