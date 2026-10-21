@@ -3,6 +3,7 @@ use crate::export;
 use crate::images::{self, TiltArgs};
 use crate::query::{QueryProjectsOutput, QueryTasksOutput};
 use crate::tiltfile;
+use crate::toolchain;
 use crate::watch;
 use extism_pdk::*;
 use moon_pdk::*;
@@ -597,35 +598,39 @@ pub fn sync_workspace(Json(input): Json<SyncWorkspaceInput>) -> FnResult<Json<Sy
     Ok(Json(output))
 }
 
-/// A `tilt` command that prefers the version pinned by the Tilt toolchain
-/// (installed through proto), falling back to whatever `tilt` is on PATH.
-/// Tilt reads `TILT_PORT`/`TILT_HOST` from the environment, so every command
-/// targets the same single instance.
+/// A `tilt` command that runs the version pinned by the Tilt toolchain (the
+/// binary it installed through proto, which moon also pins from
+/// `.prototools`), falling back to whatever `tilt` is on PATH. Tilt reads
+/// `TILT_PORT`/`TILT_HOST` from the environment, so every command targets the
+/// same single instance.
 fn tilt_command(
     root: &VirtualPath,
     config: &TiltExtensionConfig,
     args: Vec<String>,
     stream: bool,
-) -> ExecCommandInput {
+) -> AnyResult<ExecCommandInput> {
+    // Only read toolchain config and proto's manifest when they can matter.
+    let version = (config.tilt_bin == "tilt" && has_tilt_toolchain(root))
+        .then(|| load_toolchain_config::<serde_json::Value>("tilt").ok())
+        .flatten()
+        .and_then(|config| config.get("version")?.as_str().map(String::from));
+    let manifest = version
+        .as_ref()
+        .and_then(|_| fs::read_to_string(format!("{}/manifest.json", toolchain::TOOL_DIR)).ok());
+    let executable =
+        toolchain::tilt_executable(&config.tilt_bin, version.as_deref(), manifest.as_deref())
+            .map_err(|error| anyhow!(error.message()))?;
+
     let mut input = if stream {
-        ExecCommandInput::new(&config.tilt_bin, args)
+        ExecCommandInput::new(&executable.command, args)
     } else {
-        ExecCommandInput::pipe(&config.tilt_bin, args)
+        ExecCommandInput::pipe(&executable.command, args)
     }
     .cwd(root.clone());
 
-    input.paths.push("/proto/shims".into());
-    input.paths.push("/proto/bin".into());
+    input.paths.extend(executable.path.map(Into::into));
 
-    if has_tilt_toolchain(root)
-        && let Some(version) = load_toolchain_config::<serde_json::Value>("tilt")
-            .ok()
-            .and_then(|config| config.get("version")?.as_str().map(String::from))
-    {
-        input.env.insert("PROTO_TILT_VERSION".into(), version);
-    }
-
-    input
+    Ok(input)
 }
 
 /// Whether `.moon/toolchains.*` declares a top-level `tilt` toolchain. The
@@ -661,7 +666,7 @@ fn run_tilt(
     ];
     args.extend(extra_args);
 
-    let output = exec(tilt_command(root, config, args, true))?;
+    let output = exec(tilt_command(root, config, args, true)?)?;
 
     if output.exit_code != 0 {
         return Err(anyhow!(
@@ -695,18 +700,21 @@ fn start_tilt(
 /// The Tiltfile args of the running Tilt instance, or `None` if Tilt isn't
 /// running (on `TILT_PORT`, default 10350).
 fn running_args(root: &VirtualPath, config: &TiltExtensionConfig) -> Option<Vec<String>> {
-    let output = exec(tilt_command(
-        root,
-        config,
-        vec![
-            "get".into(),
-            "tiltfile".into(),
-            "(Tiltfile)".into(),
-            "-o".into(),
-            "json".into(),
-        ],
-        false,
-    ))
+    let output = exec(
+        tilt_command(
+            root,
+            config,
+            vec![
+                "get".into(),
+                "tiltfile".into(),
+                "(Tiltfile)".into(),
+                "-o".into(),
+                "json".into(),
+            ],
+            false,
+        )
+        .ok()?,
+    )
     .ok()?;
 
     if output.exit_code != 0 {
@@ -731,7 +739,7 @@ fn set_args(root: &VirtualPath, config: &TiltExtensionConfig, args: &TiltArgs) -
     let mut command = vec!["args".to_owned(), "--".to_owned()];
     command.extend(args.to_args());
 
-    let output = exec(tilt_command(root, config, command, false))?;
+    let output = exec(tilt_command(root, config, command, false)?)?;
 
     if output.exit_code != 0 {
         return Err(anyhow!("Failed to update Tilt: {}", output.get_output()));

@@ -122,8 +122,9 @@ pub struct TiltExtensionConfig {
     /// Binary used to invoke moon from Tilt resources.
     pub moon_bin: String,
 
-    /// Binary used to invoke Tilt. When the Tilt toolchain is configured,
-    /// its pinned version is preferred via proto shims.
+    /// Binary used to invoke Tilt. With the default (`tilt`) and the Tilt
+    /// toolchain configured, the binary the toolchain installed for its pinned
+    /// version is used instead. Any other value is used as-is.
     pub tilt_bin: String,
 }
 

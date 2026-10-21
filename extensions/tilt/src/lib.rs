@@ -4,6 +4,7 @@ pub mod images;
 pub mod query;
 pub mod template;
 pub mod tiltfile;
+pub mod toolchain;
 pub mod watch;
 pub mod workloads;
 

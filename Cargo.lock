@@ -5832,6 +5832,7 @@ dependencies = [
  "starbase_sandbox",
  "tera",
  "tokio",
+ "version_spec",
 ]
 
 [[package]]
