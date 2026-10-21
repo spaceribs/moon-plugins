@@ -93,7 +93,7 @@ Extra Tilt flags go after another `--`, e.g. `moon ext tilt -- up web -- --legac
 | `inputs`, `outputs`, `.gitignore` | `deps` and `ignore`, matching exactly what moon hashes. See below. |
 | project ID | `labels` (groups resources in the UI) |
 
-Every resource runs `moon run <target> --upstream none`. moon still handles caching, toolchains, and environment, while Tilt owns ordering. Interactive tasks, and tasks that run Tilt itself, are never exposed, even when tagged. Neither are tasks that depend on one, directly or through other such tasks: a `tilt-open` task that runs after `tilt-up` is meant to follow Tilt from moon, and as a resource it would start before Tilt is up (Tilt ignores `resource_deps` on resources that don't exist). The generated file lists the ones it left out, with the dependency that caused it:
+Every resource runs `moon exec <target> --upstream none --on-failure bail --ignore-ci-checks`, which is what `moon run` does, except that it also runs in CI. `moon run` skips tasks with `runInCI: false` (the default for persistent tasks) when `CI` is set, which would stop `moon ext tilt -- ci` from starting any server there. moon still handles caching, toolchains, and environment, while Tilt owns ordering. Interactive tasks, and tasks that run Tilt itself, are never exposed, even when tagged. Neither are tasks that depend on one, directly or through other such tasks: a `tilt-open` task that runs after `tilt-up` is meant to follow Tilt from moon, and as a resource it would start before Tilt is up (Tilt ignores `resource_deps` on resources that don't exist). The generated file lists the ones it left out, with the dependency that caused it:
 
 ```python
 # Not exposed: these tasks depend on a task that runs Tilt (directly, or
@@ -130,7 +130,7 @@ Tilt notices file changes, moon decides what's affected, and your app's own live
 - explicit input files are always watched, even if gitignored, as moon hashes them
 - inputs under `.moon/` and workspace-wide globs (`/**/*`) are not watched
 
-Even when a build step re-runs, `moon run` is a cache hit (no work) if moon's hash didn't change.
+Even when a build step re-runs, the task is a moon cache hit (no work) if moon's hash didn't change.
 
 **Services** (persistent tasks) follow `serviceRestart`:
 
@@ -224,7 +224,7 @@ If you already have a `Tiltfile`, add `include("./Tiltfile.moon")` to it.
 `Tiltfile.moon` is regenerated during moon's **workspace sync**: on `moon sync`, and automatically before `moon run`/`moon ci`. Adding a project, a `Tiltfile`, a tag, or a dependency updates it without extra steps.
 
 - The file is only rewritten when its contents change, so a running `tilt up` reloads only when something actually changed.
-- Resources launched by Tilt run `moon run` with `MOON_SKIP_SYNC_WORKSPACE=true`, so service restarts don't trigger syncs.
+- Resources launched by Tilt run moon with `MOON_SKIP_SYNC_WORKSPACE=true`, so service restarts don't trigger syncs.
 - Sync failures (for example, `moon query` erroring, or a `moonBin` path that doesn't exist) are recorded on the sync operation, not raised, so they never block `moon run`. The one exception is a bare `moonBin` name (the default `moon`) that isn't on `PATH`: the host aborts that call. If moon isn't on your `PATH`, set `moonBin` to its path, or set `sync: false`.
 - In CI, moon flags files changed by a sync. Either commit `Tiltfile`/`Tiltfile.moon`, or ignore them and set `sync: false` for CI.
 - Project Tiltfiles are evaluated relative to their own directory, as with any Tilt `include()`. Resource names must be unique across the whole workspace.
