@@ -4,7 +4,8 @@
     `--to-edit` use the image as published, and your own Kubernetes or Compose
     resources deploy it by name. Source changes are synced into running
     containers (Live Update) instead of rebuilding, except for files that need
-    a rebuild (manifests, lockfiles). -#}
+    a rebuild (manifests, lockfiles), and a project's `liveUpdate.run` command
+    runs after each sync, before any restart. -#}
 {%- block image -%}
 {%- set lu = image.live_update %}
 {%- if lu and lu.restart_entrypoint %}
@@ -36,6 +37,9 @@ if _moon_edit({{ image.project | starlark }}):
 {%- for sync in lu.syncs %}
             sync({{ sync.local | moon_path }}, {{ sync.remote | starlark }}),
 {%- endfor %}
+{%- if lu.run %}
+            run({{ lu.run | starlark }}),
+{%- endif %}
 {%- if lu.restart_container %}
             restart_container(),
 {%- endif %}

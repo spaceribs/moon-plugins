@@ -34,6 +34,24 @@ When the project's `serviceRestart` is `inputs` and it has a `docker.file.startT
 - **WHEN** `api` sets `serviceRestart: "inputs"` and `workloads: { compose: ["api"] }`, and its source is synced
 - **THEN** the file is synced and the `api` container restarts, re-running `moon run api:serve`, without an image rebuild
 
+### Requirement: Run a command after syncing
+A project SHALL be able to set `project.tilt.liveUpdate.run` to a command (a shell string, or a list of strings run directly), run in the container after each sync as a Live Update `run()` step. It SHALL run before any restart, so it combines with `serviceRestart: inputs`, and SHALL NOT restart the process by itself. Settings under `project.tilt.liveUpdate` SHALL enable Live Update for the project, whatever the workspace `liveUpdate` says.
+
+#### Scenario: Codegen without a restart
+- **WHEN** `tests` sets `project.tilt.liveUpdate.run: ["moon", "run", "tests:codegen"]` and its source is synced
+- **THEN** `moon run tests:codegen` runs in the container and the process isn't restarted
+
+#### Scenario: Run and restart
+- **WHEN** `api` sets `liveUpdate.run` and `serviceRestart: "inputs"`
+- **THEN** after a sync the command runs, then the app restarts
+
+### Requirement: Malformed Live Update settings are rejected
+A `project.tilt.liveUpdate` that isn't a boolean or an object, has an unknown setting, or has an empty or non-string `run` SHALL fail generation with an error naming the project.
+
+#### Scenario: Invalid command
+- **WHEN** `web` sets `project.tilt.liveUpdate.run: []`
+- **THEN** generation fails with an error naming `web`
+
 ### Requirement: Live Update can be disabled
 With `liveUpdate: false` for the workspace or project, changes SHALL rebuild the image instead of syncing.
 
