@@ -179,12 +179,7 @@ fn plan_live_update(
             .into_iter()
             .flat_map(|tasks| tasks.values())
         {
-            fall_back_on.extend(
-                task.input_files
-                    .keys()
-                    .filter(|file| !file.starts_with(".moon"))
-                    .cloned(),
-            );
+            fall_back_on.extend(image_input_files(task).cloned());
         }
     }
 
@@ -256,9 +251,20 @@ fn dependency_closure<'a>(
     closure
 }
 
+/// Explicit task input files that matter to an image built from the task's
+/// project: everything outside `.moon/` (moon config is handled separately).
+/// Both the rebuild triggers and Live Update's `fall_back_on` use this, so
+/// every `fall_back_on` path is watched.
+fn image_input_files(task: &crate::query::QueryTask) -> impl Iterator<Item = &String> {
+    task.input_files
+        .keys()
+        .filter(|file| !file.starts_with(".moon"))
+}
+
 /// What triggers a rebuild: the closure's project directories, moon config
-/// for them (the Dockerfile is generated from it), and root-level files their
-/// tasks take as inputs (lockfiles, shared configs). Task outputs are ignored:
+/// for them (the Dockerfile is generated from it), and files their tasks take
+/// as explicit inputs (lockfiles, shared configs, docs anywhere in the
+/// workspace). Task outputs are ignored:
 /// moon's Dockerfiles build inside the container, not from host artifacts.
 fn image_triggers(
     closure: &BTreeSet<&str>,
@@ -293,11 +299,10 @@ fn image_triggers(
             .into_iter()
             .flat_map(|tasks| tasks.values())
         {
-            for file in task.input_files.keys() {
-                if !file.contains('/') && !file.starts_with(".moon") {
-                    watch.insert(file.clone());
-                }
-            }
+            // Every input `fall_back_on` may list must be watched, or Tilt
+            // rejects the Tiltfile. Those inside watched directories are
+            // dropped below.
+            watch.extend(image_input_files(task).cloned());
 
             for file in task.output_files.keys() {
                 ignore.insert(file.clone());
@@ -507,6 +512,73 @@ mod tests {
 
         // api only depends on db: web/docs changes never rebuild it.
         assert_eq!(api.watch, [".moon/workspace.yml", "api", "db"]);
+    }
+
+    #[test]
+    fn watches_nested_inputs_that_fall_back_on() {
+        let (projects, mut tasks) = fixture();
+        // api is in web's closure; its build takes a file outside any project.
+        let build = tasks
+            .tasks
+            .get_mut("api")
+            .and_then(|tasks| tasks.get_mut("build"))
+            .unwrap();
+        build
+            .input_files
+            .insert("docs/ui/README.md".into(), serde_json::Value::Null);
+
+        let images = plan_images(
+            &projects,
+            &tasks,
+            &TiltExtensionConfig::default(),
+            &config_files(),
+        );
+        let web = images.iter().find(|i| i.project == "web").unwrap();
+
+        assert!(web.watch.contains(&"docs/ui/README.md".to_owned()));
+        assert!(
+            web.live_update
+                .as_ref()
+                .unwrap()
+                .fall_back_on
+                .contains(&"docs/ui/README.md".to_owned())
+        );
+        // An input inside a watched project directory isn't listed separately.
+        assert!(!web.watch.contains(&"web/package.json".to_owned()));
+    }
+
+    #[test]
+    fn every_fall_back_on_path_is_watched() {
+        let (projects, mut tasks) = fixture();
+        tasks
+            .tasks
+            .get_mut("api")
+            .and_then(|tasks| tasks.get_mut("build"))
+            .unwrap()
+            .input_files
+            .insert("docs/ui/README.md".into(), serde_json::Value::Null);
+
+        let images = plan_images(
+            &projects,
+            &tasks,
+            &TiltExtensionConfig::default(),
+            &config_files(),
+        );
+
+        // Tilt rejects a Tiltfile whose `fall_back_on` isn't under its `deps`.
+        for image in &images {
+            for path in &image.live_update.as_ref().unwrap().fall_back_on {
+                assert!(
+                    image
+                        .watch
+                        .iter()
+                        .any(|dir| path == dir || path.starts_with(&format!("{dir}/"))),
+                    "{}: {path} isn't watched ({:?})",
+                    image.project,
+                    image.watch
+                );
+            }
+        }
     }
 
     #[test]

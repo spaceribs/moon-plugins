@@ -13,11 +13,15 @@ With `liveUpdate` enabled (default, overridable by `project.tilt.liveUpdate`), e
 - **THEN** it is copied to `/app/api/src` in the running container, and the image isn't rebuilt
 
 ### Requirement: Some files need a full rebuild
-Changes to moon config, root-level task inputs (e.g. lockfiles), and explicit task input files (e.g. `package.json`) SHALL trigger a full image rebuild instead of a sync.
+Changes to moon config, root-level task inputs (e.g. lockfiles), and explicit task input files (e.g. `package.json`) SHALL trigger a full image rebuild instead of a sync. Every file that triggers a full rebuild SHALL also be watched by the image, so the generated Tiltfile always loads.
 
 #### Scenario: moon.yml edited
 - **WHEN** `api/moon.yml` changes
 - **THEN** the image is rebuilt and redeployed
+
+#### Scenario: Nested explicit input
+- **WHEN** a task in the image's dependency closure takes `/docs/ui/README.md` as an input
+- **THEN** `docs/ui/README.md` is both a full-rebuild file and watched by the image, and Tilt loads the Tiltfile
 
 ### Requirement: Restart apps without live reload
 When the project's `serviceRestart` is `inputs` and it has a `docker.file.startTask`, the app SHALL be restarted after syncing, re-running `moon run <project>:<startTask>`: through Tilt's `restart_process` extension, or, when every workload the project declares is a Compose service, by restarting the container with `restart_container()`, since Tilt doesn't support `restart_process`'s entrypoint override for Compose. Otherwise the app SHALL be left to reload itself.

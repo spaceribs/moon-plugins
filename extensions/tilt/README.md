@@ -271,7 +271,7 @@ Each image is a `custom_build`. It runs `moon docker file <project>` (into `.moo
 
 - the source directories of the project and every project it depends on (transitively, all scopes)
 - their moon config (`.moon/*`, `moon.yml`), which the Dockerfile is generated from
-- root-level files their tasks take as inputs (lockfiles, shared configs)
+- files their tasks take as explicit inputs, anywhere in the workspace outside `.moon/` (lockfiles, shared configs, docs a check reads). Live Update rebuilds instead of syncing for these, so they must trigger a rebuild too.
 - minus their task outputs (the image builds inside the container, not from host artifacts) and gitignored files
 
 So editing one service never rebuilds unrelated images, while a change to a shared library rebuilds every image that uses it.
