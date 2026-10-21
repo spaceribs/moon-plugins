@@ -199,7 +199,7 @@ pub fn execute_extension(Json(input): Json<ExecuteExtensionInput>) -> FnResult<(
                         args.to_edit = to_edit;
                     }
 
-                    set_args(root, &config, &args)?;
+                    set_args(root, &config, &current, &args)?;
                 }
                 None => {
                     let args = TiltArgs {
@@ -222,7 +222,7 @@ pub fn execute_extension(Json(input): Json<ExecuteExtensionInput>) -> FnResult<(
                         to_edit: to_edit.or(TiltArgs::parse(&current).to_edit),
                     };
 
-                    set_args(root, &config, &args)?;
+                    set_args(root, &config, &current, &args)?;
                 }
                 None => {
                     let args = TiltArgs {
@@ -884,16 +884,21 @@ fn running_args(root: &VirtualPath, config: &TiltExtensionConfig) -> Option<Vec<
     )
 }
 
-/// Replace the running Tilt's selection. Tilt enables the selected
-/// resources plus their dependencies, and rejects unknown names.
-fn set_args(root: &VirtualPath, config: &TiltExtensionConfig, args: &TiltArgs) -> AnyResult<()> {
-    let mut command = vec!["args".to_owned(), "--".to_owned()];
-    command.extend(args.to_args());
+/// Replace the running Tilt's selection, re-applying it even when the args
+/// are unchanged. Tilt enables the selected resources plus their
+/// dependencies, and rejects unknown names.
+fn set_args(
+    root: &VirtualPath,
+    config: &TiltExtensionConfig,
+    current: &[String],
+    args: &TiltArgs,
+) -> AnyResult<()> {
+    for command in args.set_commands(current) {
+        let output = exec(tilt_command(root, config, command, false)?)?;
 
-    let output = exec(tilt_command(root, config, command, false)?)?;
-
-    if output.exit_code != 0 {
-        return Err(anyhow!("Failed to update Tilt: {}", output.get_output()));
+        if output.exit_code != 0 {
+            return Err(anyhow!("Failed to update Tilt: {}", output.get_output()));
+        }
     }
 
     let running = if args.to_run.is_empty() {

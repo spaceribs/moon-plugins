@@ -332,6 +332,10 @@ fn image_triggers(
     (watch, ignore.into_iter().collect())
 }
 
+/// A `to-run` value the generated Tiltfile skips. Putting it in the args
+/// changes them without changing what is selected.
+pub const REAPPLY_MARKER: &str = "(reapply)";
+
 /// Tiltfile args: projects to run (positional) and projects whose images
 /// build from source (`--to-edit`, absent = all, `none` = none).
 #[derive(Debug, Default, PartialEq)]
@@ -375,6 +379,30 @@ impl TiltArgs {
         }
 
         args
+    }
+
+    /// The `tilt args` invocations that switch a running Tilt from `current`
+    /// args to these. Tilt only re-applies `config.set_enabled_resources`
+    /// when the args change, so unchanged args (say, after editing
+    /// `project.tilt.dependsOn`) go through a marker first, which selects the
+    /// same resources and so doesn't flicker anything off.
+    pub fn set_commands(&self, current: &[String]) -> Vec<Vec<String>> {
+        let target = self.to_args();
+        let command = |tiltfile_args: Vec<String>| {
+            let mut command = vec!["args".to_owned(), "--".to_owned()];
+            command.extend(tiltfile_args);
+            command
+        };
+        let mut commands = vec![];
+
+        if current == target {
+            let mut bounce = vec![REAPPLY_MARKER.to_owned()];
+            bounce.extend(target.clone());
+            commands.push(command(bounce));
+        }
+
+        commands.push(command(target));
+        commands
     }
 }
 
@@ -825,6 +853,44 @@ mod tests {
         assert_eq!(
             resolve_to_edit(&[], Some(vec![])),
             Some(vec!["none".into()])
+        );
+    }
+
+    fn strings(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn changed_args_are_set_once() {
+        let args = TiltArgs::parse(&strings(&["web", "--to-edit", "web"]));
+
+        assert_eq!(
+            args.set_commands(&strings(&["docs"])),
+            vec![strings(&["args", "--", "web", "--to-edit", "web"])]
+        );
+    }
+
+    #[test]
+    fn unchanged_args_bounce_through_the_marker() {
+        let current = strings(&["web", "--to-edit", "web"]);
+
+        assert_eq!(
+            TiltArgs::parse(&current).set_commands(&current),
+            vec![
+                strings(&["args", "--", "(reapply)", "web", "--to-edit", "web"]),
+                strings(&["args", "--", "web", "--to-edit", "web"]),
+            ]
+        );
+    }
+
+    #[test]
+    fn unchanged_empty_args_bounce_too() {
+        assert_eq!(
+            TiltArgs::default().set_commands(&[]),
+            vec![
+                strings(&["args", "--", "(reapply)"]),
+                strings(&["args", "--"]),
+            ]
         );
     }
 }
