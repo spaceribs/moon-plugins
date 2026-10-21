@@ -89,7 +89,7 @@ mod tilt_extension {
             let generated = std::fs::read_to_string(sandbox.path().join("Tiltfile.moon")).unwrap();
 
             assert!(generated.contains("local_resource(\n    \"web:dev\","));
-            assert!(generated.contains("\"/workspace/fake-moon\", \"run\", \"api:serve\""));
+            assert!(generated.contains("\"/workspace/fake-moon\", \"exec\", \"api:serve\""));
             assert!(!generated.contains("web:lint"));
 
             let main = std::fs::read_to_string(sandbox.path().join("Tiltfile")).unwrap();
