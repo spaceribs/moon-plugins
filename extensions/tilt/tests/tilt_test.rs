@@ -1,18 +1,29 @@
 use moon_pdk_test_utils::*;
 use serde_json::json;
 
-/// Creates a fake `moon` binary that replays captured `moon query` output.
+/// A fake `moon` that replays captured `moon query` output (`<command>.json`
+/// next to it), as the extension's `moonBin`.
 #[cfg(unix)]
+const FAKE_MOON: &str = "/workspace/fake-moon";
+#[cfg(windows)]
+const FAKE_MOON: &str = "/workspace/fake-moon.cmd";
+
 fn create_fake_moon(sandbox: &MoonWasmSandbox) {
-    use std::os::unix::fs::PermissionsExt;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
 
-    sandbox.create_file(
-        "fake-moon",
-        "#!/bin/sh\ncat \"$(dirname \"$0\")/$2.json\"\n",
-    );
+        sandbox.create_file(
+            "fake-moon",
+            "#!/bin/sh\ncat \"$(dirname \"$0\")/$2.json\"\n",
+        );
 
-    let path = sandbox.path().join("fake-moon");
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = sandbox.path().join("fake-moon");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[cfg(windows)]
+    sandbox.create_file("fake-moon.cmd", "@type \"%~dp0%2.json\"\r\n");
 }
 
 mod tilt_extension {
@@ -52,7 +63,6 @@ mod tilt_extension {
             .await;
     }
 
-    #[cfg(unix)]
     mod generate {
         use super::*;
 
@@ -61,10 +71,7 @@ mod tilt_extension {
 
             sandbox
                 .create_extension_with_config("tilt", |config| {
-                    config.insert(
-                        "moon_extension_config",
-                        json!({ "moonBin": "/workspace/fake-moon" }),
-                    );
+                    config.insert("moon_extension_config", json!({ "moonBin": FAKE_MOON }));
                 })
                 .await
         }
@@ -89,7 +96,7 @@ mod tilt_extension {
             let generated = std::fs::read_to_string(sandbox.path().join("Tiltfile.moon")).unwrap();
 
             assert!(generated.contains("local_resource(\n    \"web:dev\","));
-            assert!(generated.contains("\"/workspace/fake-moon\", \"exec\", \"api:serve\""));
+            assert!(generated.contains(&format!("\"{FAKE_MOON}\", \"exec\", \"api:serve\"")));
             assert!(!generated.contains("web:lint"));
 
             let main = std::fs::read_to_string(sandbox.path().join("Tiltfile")).unwrap();
@@ -159,7 +166,6 @@ mod tilt_extension {
         }
     }
 
-    #[cfg(unix)]
     mod export_k8s {
         use super::*;
 
@@ -237,7 +243,6 @@ mod tilt_extension {
         }
     }
 
-    #[cfg(unix)]
     mod sync_workspace {
         use super::*;
 
@@ -271,7 +276,7 @@ mod tilt_extension {
             let sandbox = create_moon_sandbox("query");
             create_fake_moon(&sandbox);
             let plugin = sandbox.create_extension("tilt").await;
-            let config = json!({ "moonBin": "/workspace/fake-moon" });
+            let config = json!({ "moonBin": FAKE_MOON });
 
             let output = sync(&plugin, config.clone()).await;
 
@@ -291,7 +296,7 @@ mod tilt_extension {
             sandbox.create_file("docs/Tiltfile", "local_resource('docs', 'echo')\n");
             let plugin = sandbox.create_extension("tilt").await;
 
-            sync(&plugin, json!({ "moonBin": "/workspace/fake-moon" })).await;
+            sync(&plugin, json!({ "moonBin": FAKE_MOON })).await;
 
             let generated = std::fs::read_to_string(sandbox.path().join("Tiltfile.moon")).unwrap();
 
@@ -317,7 +322,7 @@ mod tilt_extension {
             super::generate::set_removed_k8s_settings(&sandbox);
             let plugin = sandbox.create_extension("tilt").await;
 
-            let output = sync(&plugin, json!({ "moonBin": "/workspace/fake-moon" })).await;
+            let output = sync(&plugin, json!({ "moonBin": FAKE_MOON })).await;
             let error = output.operations[0].error.as_deref().unwrap_or_default();
 
             assert_eq!(output.operations[0].status, OperationStatus::Failed);
@@ -338,7 +343,6 @@ mod tilt_extension {
         }
     }
 
-    #[cfg(unix)]
     mod templates {
         use super::*;
 
@@ -348,7 +352,7 @@ mod tilt_extension {
         ) -> ExtensionTestWrapper {
             create_fake_moon(sandbox);
 
-            let mut config = json!({ "moonBin": "/workspace/fake-moon" });
+            let mut config = json!({ "moonBin": FAKE_MOON });
             config
                 .as_object_mut()
                 .unwrap()

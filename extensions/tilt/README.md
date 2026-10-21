@@ -31,7 +31,7 @@ Pair it with the [Tilt toolchain](../../toolchains/tilt) to install and pin the 
 
 - **moon** 2.6 or newer. Developed and tested with 2.6.2.
 - **Tilt.** Tested with 0.37.8. Install it yourself, or with the [Tilt toolchain](../../toolchains/tilt) / [proto plugin](../../tools/tilt). With the toolchain configured, the extension runs the binary it installed for the pinned version (see `tiltBin`), so Tilt doesn't need to be on your `PATH`.
-- **Linux or macOS.** Windows isn't supported yet: container image builds run through `sh`.
+- **Linux, macOS, or Windows.** Everything works natively on all three, except [container images](#containers-opt-in), which need Linux or macOS (on Windows, use WSL2).
 - For containers only: **Docker**, plus a local Kubernetes cluster such as [kind](https://kind.sigs.k8s.io) created with [ctlptl](https://github.com/tilt-dev/ctlptl) (`ctlptl create cluster kind --registry=ctlptl-registry`).
 
 ## Quick start
@@ -233,6 +233,8 @@ If you already have a `Tiltfile`, add `include("./Tiltfile.moon")` to it.
 **While Tilt runs**, a `(moon)` resource watches everything the generated file is derived from: `.moon/*` config and `.moon/tasks/`, every project's `moon.yml`, the `.gitignore` files, and a custom template. When one changes, it runs `moon ext tilt -- generate`, and Tilt reloads only if the output changed. It doesn't run at startup, and stays enabled whatever projects are selected. Disable with `watchConfig: false`. New projects matched by workspace globs are picked up the next time anything regenerates the file.
 
 ## Containers (opt-in)
+
+Container images need Linux or macOS, which includes Windows through WSL2: the build runs a POSIX shell command, which native Windows doesn't support.
 
 Projects can also run as containers, built from moon's [generated Dockerfiles](https://moonrepo.dev/docs/commands/docker/file). The extension builds the image. Your own Kubernetes YAML, Helm chart, or Compose file deploys it, and [declaring that workload](#workloads-your-tiltfiles-deploy) connects it to moon's project graph. Both are opt-in per project, so `docker.file` settings you use for production images are left alone:
 

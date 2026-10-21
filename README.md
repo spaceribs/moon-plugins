@@ -21,7 +21,7 @@ tilt:
 
 Each plugin's README covers setup: start with the [Tilt extension's quick start](./extensions/tilt#quick-start).
 
-**Supported platforms:** Linux and macOS. The proto plugin (`tilt_tool`) also installs Tilt on Windows, but the extension's container builds need `sh`, and CI doesn't run on Windows.
+**Supported platforms:** Linux, macOS, and Windows (x64), all tested in CI. The extension's container image builds need Linux or macOS, which includes Windows through WSL2.
 
 ## Layout
 

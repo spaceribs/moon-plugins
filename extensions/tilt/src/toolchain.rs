@@ -44,11 +44,13 @@ pub struct TiltExecutable {
 /// with the toolchain pinning `toolchain_version`, the installed binary of the
 /// highest matching version (with its directory first on `PATH`, for anything
 /// Tilt starts); otherwise `tilt` from `PATH`. `manifest` is proto's
-/// `manifest.json` for Tilt, if readable.
+/// `manifest.json` for Tilt, if readable, and `exe` the binary's file name in
+/// an install ([`exe_name`]).
 pub fn tilt_executable(
     tilt_bin: &str,
     toolchain_version: Option<&str>,
     manifest: Option<&str>,
+    exe: &str,
 ) -> Result<TiltExecutable, NotInstalled> {
     let plain = |command: &str| TiltExecutable {
         command: command.to_owned(),
@@ -65,9 +67,14 @@ pub fn tilt_executable(
     let version = resolve_installed(requested, manifest)?;
 
     Ok(TiltExecutable {
-        command: format!("{TOOL_DIR}/{version}/tilt"),
+        command: format!("{TOOL_DIR}/{version}/{exe}"),
         path: Some(format!("{TOOL_DIR}/{version}")),
     })
+}
+
+/// The Tilt binary's file name in a proto install on the host OS.
+pub fn exe_name(windows: bool) -> &'static str {
+    if windows { "tilt.exe" } else { "tilt" }
 }
 
 /// proto's per-tool `manifest.json`.
@@ -167,7 +174,7 @@ mod tests {
     #[test]
     fn runs_the_installed_binary_of_the_pinned_version() {
         assert_eq!(
-            tilt_executable("tilt", Some("0.37"), Some(MANIFEST)).unwrap(),
+            tilt_executable("tilt", Some("0.37"), Some(MANIFEST), exe_name(false)).unwrap(),
             TiltExecutable {
                 command: "/proto/tools/tilt/0.37.8/tilt".into(),
                 path: Some("/proto/tools/tilt/0.37.8".into()),
@@ -176,9 +183,27 @@ mod tests {
     }
 
     #[test]
+    fn runs_tilt_exe_on_windows() {
+        assert_eq!(
+            tilt_executable("tilt", Some("0.37.8"), Some(MANIFEST), exe_name(true)).unwrap(),
+            TiltExecutable {
+                command: "/proto/tools/tilt/0.37.8/tilt.exe".into(),
+                path: Some("/proto/tools/tilt/0.37.8".into()),
+            }
+        );
+        // Falling back to PATH stays `tilt`: Windows resolves the extension.
+        assert_eq!(
+            tilt_executable("tilt", None, None, exe_name(true))
+                .unwrap()
+                .command,
+            "tilt"
+        );
+    }
+
+    #[test]
     fn falls_back_to_path_without_a_pinned_version() {
         assert_eq!(
-            tilt_executable("tilt", None, None).unwrap(),
+            tilt_executable("tilt", None, None, exe_name(false)).unwrap(),
             TiltExecutable {
                 command: "tilt".into(),
                 path: None,
@@ -190,7 +215,7 @@ mod tests {
     fn a_custom_tilt_bin_takes_precedence() {
         // Even when the pinned version isn't installed.
         assert_eq!(
-            tilt_executable("/opt/tilt/bin/tilt", Some("0.37.8"), None).unwrap(),
+            tilt_executable("/opt/tilt/bin/tilt", Some("0.37.8"), None, exe_name(false)).unwrap(),
             TiltExecutable {
                 command: "/opt/tilt/bin/tilt".into(),
                 path: None,
@@ -200,7 +225,8 @@ mod tests {
 
     #[test]
     fn fails_when_the_pinned_version_is_not_installed() {
-        let error = tilt_executable("tilt", Some("0.35"), Some(MANIFEST)).unwrap_err();
+        let error =
+            tilt_executable("tilt", Some("0.35"), Some(MANIFEST), exe_name(false)).unwrap_err();
 
         assert_eq!(error.requested, "0.35");
     }
