@@ -582,6 +582,42 @@ mod tests {
     }
 
     #[test]
+    fn images_ignore_runtime_dependencies() {
+        let (mut projects, tasks) = fixture();
+        let web = projects
+            .projects
+            .iter_mut()
+            .find(|p| p.id == "web")
+            .unwrap();
+
+        // docs isn't in web's moon graph; a runtime-only edge must not add it.
+        web.config.project = Some(QueryProjectMetadata {
+            metadata: serde_json::from_str(
+                r#"{ "tilt": { "image": "web", "dependsOn": ["docs"] } }"#,
+            )
+            .unwrap(),
+        });
+
+        let images = plan_images(
+            &projects,
+            &tasks,
+            &TiltExtensionConfig::default(),
+            &config_files(),
+        );
+        let web = images.iter().find(|i| i.project == "web").unwrap();
+
+        assert!(!web.watch.iter().any(|path| path.starts_with("docs")));
+        assert!(
+            !web.live_update
+                .as_ref()
+                .unwrap()
+                .syncs
+                .iter()
+                .any(|sync| sync.local == "docs")
+        );
+    }
+
+    #[test]
     fn builds_only_projects_that_opt_in() {
         let (mut projects, tasks) = fixture();
         let images = plan_images(

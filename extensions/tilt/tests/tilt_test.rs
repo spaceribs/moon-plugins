@@ -146,6 +146,27 @@ mod tilt_extension {
         }
 
         #[tokio::test(flavor = "multi_thread")]
+        #[should_panic(expected = "names projects that don't exist")]
+        async fn fails_for_unknown_runtime_dependencies() {
+            let sandbox = create_moon_sandbox("query");
+            let path = sandbox.path().join("projects.json");
+            let mut projects: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            let web = projects["projects"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|project| project["id"] == "web")
+                .unwrap();
+
+            web["config"]["project"] = json!({ "metadata": { "tilt": { "dependsOn": ["apii"] } } });
+            std::fs::write(path, projects.to_string()).unwrap();
+            let plugin = create_plugin(&sandbox).await;
+
+            plugin.execute_extension(generate_args(&[])).await;
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
         #[should_panic(expected = "export-k8s api")]
         async fn fails_with_migration_guidance_for_k8s_settings() {
             let sandbox = create_moon_sandbox("query");
