@@ -2262,6 +2262,69 @@ k8s_yaml("deploy.yaml"){% endblock footer %}"#
     }
 
     #[test]
+    fn live_update_runs_a_command_before_restarting() {
+        let (mut projects, tasks) = fixture();
+        let api = projects
+            .projects
+            .iter_mut()
+            .find(|p| p.id == "api")
+            .unwrap();
+
+        api.config
+            .docker
+            .file
+            .insert("startTask".into(), "serve".into());
+        api.config.project = Some(crate::query::QueryProjectMetadata {
+            metadata: serde_json::from_str(
+                r#"{ "tilt": { "image": "api", "liveUpdate": { "run": ["moon", "run", "api:codegen"] } } }"#,
+            )
+            .unwrap(),
+        });
+
+        let config = TiltExtensionConfig::default();
+        let render_api = |projects: &QueryProjectsOutput| {
+            let Planned {
+                resources, images, ..
+            } = plan_with_images(projects, &tasks, &config, &[]);
+
+            render(
+                &RenderInput {
+                    images: &images,
+                    ..RenderInput::new(&resources, projects, "0.0.0")
+                },
+                &config,
+            )
+            .unwrap()
+        };
+
+        // Without a restart, the command is the last step.
+        let output = render_api(&projects);
+
+        assert!(output.contains("    custom_build(\n        \"api\",\n"));
+        assert!(!output.contains("restart_process"));
+        assert!(
+            output.contains("            run([\"moon\", \"run\", \"api:codegen\"]),\n        ],\n")
+        );
+
+        // With one, it runs first and the extension appends the restart.
+        let api = projects
+            .projects
+            .iter_mut()
+            .find(|p| p.id == "api")
+            .unwrap();
+        api.config.project = Some(crate::query::QueryProjectMetadata {
+            metadata: serde_json::from_str(
+                r#"{ "tilt": { "image": "api", "serviceRestart": "inputs", "liveUpdate": { "run": "moon run api:codegen" } } }"#,
+            )
+            .unwrap(),
+        });
+        let output = render_api(&projects);
+
+        assert!(output.contains("custom_build_with_restart("));
+        assert!(output.contains("            run(\"moon run api:codegen\"),\n        ],\n"));
+    }
+
+    #[test]
     fn images_build_without_deploying() {
         let (mut projects, tasks) = fixture();
         let api = projects

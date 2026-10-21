@@ -54,6 +54,92 @@ pub struct LiveUpdate {
     /// for images deployed with Docker Compose, where Tilt doesn't support
     /// `restart_process`'s entrypoint override. The container re-runs its CMD.
     pub restart_container: bool,
+    /// Command to run in the container after syncing, before any restart.
+    pub run: Option<RunCommand>,
+}
+
+/// A command for Live Update's `run()` step: a shell string, or an argv list
+/// that runs without a shell.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum RunCommand {
+    Shell(String),
+    Exec(Vec<String>),
+}
+
+/// A project's `project.tilt.liveUpdate`: a bool, or settings that enable it.
+#[derive(Debug, PartialEq)]
+struct LiveUpdateSetting {
+    enabled: Option<bool>,
+    run: Option<RunCommand>,
+}
+
+fn parse_live_update(value: &serde_json::Value) -> Result<LiveUpdateSetting, String> {
+    use serde_json::Value;
+
+    let invalid = |reason: &str| format!("<property>project.tilt.liveUpdate</property> {reason}");
+
+    match value {
+        Value::Bool(enabled) => Ok(LiveUpdateSetting {
+            enabled: Some(*enabled),
+            run: None,
+        }),
+        Value::Object(settings) => {
+            if let Some(key) = settings.keys().find(|key| key.as_str() != "run") {
+                return Err(invalid(&format!(
+                    "has an unknown setting <property>{key}</property>"
+                )));
+            }
+
+            let run = match settings.get("run") {
+                None => None,
+                Some(Value::String(command)) if !command.trim().is_empty() => {
+                    Some(RunCommand::Shell(command.clone()))
+                }
+                Some(Value::Array(argv))
+                    if !argv.is_empty() && argv.iter().all(|arg| arg.as_str().is_some()) =>
+                {
+                    let argv: Vec<String> = argv
+                        .iter()
+                        .filter_map(|arg| arg.as_str().map(str::to_owned))
+                        .collect();
+
+                    if argv[0].trim().is_empty() {
+                        return Err(invalid(
+                            "<property>run</property> must start with a command",
+                        ));
+                    }
+
+                    Some(RunCommand::Exec(argv))
+                }
+                Some(_) => {
+                    return Err(invalid(
+                        "<property>run</property> must be a command string or a non-empty list of strings",
+                    ));
+                }
+            };
+
+            // Settings turn it on, even when the workspace turns it off.
+            Ok(LiveUpdateSetting {
+                enabled: Some(true),
+                run,
+            })
+        }
+        _ => Err(invalid(
+            "must be a boolean or an object with <property>run</property>",
+        )),
+    }
+}
+
+/// The first malformed `project.tilt.liveUpdate`, as an error message.
+pub fn live_update_settings_error(projects: &QueryProjectsOutput) -> Option<String> {
+    projects.projects.iter().find_map(|project| {
+        let value = project.config.tilt_metadata()?.get("liveUpdate")?;
+
+        parse_live_update(value)
+            .err()
+            .map(|error| format!("Invalid {error} in project <id>{}</id>", project.id))
+    })
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -127,7 +213,8 @@ pub fn plan_images(
 /// Live Update for a project's image: sync the source directories of the
 /// project and its dependencies (moon's Dockerfiles keep the workspace layout
 /// under `WORKDIR /app`), and fall back to a full rebuild for files that need
-/// one. Apps without live reload (`serviceRestart: inputs`) are restarted.
+/// one. Apps without live reload (`serviceRestart: inputs`) are restarted, after
+/// running the project's own `liveUpdate.run` command, if any.
 fn plan_live_update(
     project: &crate::query::QueryProject,
     closure: &BTreeSet<&str>,
@@ -137,9 +224,13 @@ fn plan_live_update(
     config_files: &[String],
 ) -> Option<LiveUpdate> {
     let tilt = project.config.tilt_metadata();
-    let enabled = tilt
+    // Malformed settings are reported by `live_update_settings_error`.
+    let setting = tilt
         .and_then(|tilt| tilt.get("liveUpdate"))
-        .and_then(|value| value.as_bool())
+        .and_then(|value| parse_live_update(value).ok());
+    let enabled = setting
+        .as_ref()
+        .and_then(|setting| setting.enabled)
         .unwrap_or(config.live_update);
 
     if !enabled {
@@ -212,6 +303,7 @@ fn plan_live_update(
             _ => None,
         },
         restart_container: false,
+        run: setting.and_then(|setting| setting.run),
     })
 }
 
@@ -760,6 +852,150 @@ mod tests {
             web.live_update.as_ref().unwrap().restart_entrypoint,
             Some(vec!["moon".into(), "run".into(), "web:dev".into()])
         );
+    }
+
+    fn web_with_live_update(setting: &str) -> (QueryProjectsOutput, QueryTasksOutput) {
+        let (mut projects, tasks) = fixture();
+        let web = projects
+            .projects
+            .iter_mut()
+            .find(|p| p.id == "web")
+            .unwrap();
+        web.config.project = Some(QueryProjectMetadata {
+            metadata: serde_json::from_str(&format!(
+                r#"{{ "tilt": {{ "image": "web", "liveUpdate": {setting} }} }}"#
+            ))
+            .unwrap(),
+        });
+
+        (projects, tasks)
+    }
+
+    fn web_live_update(setting: &str, config: &TiltExtensionConfig) -> Option<LiveUpdate> {
+        let (projects, tasks) = web_with_live_update(setting);
+
+        plan_images(&projects, &tasks, config, &config_files())
+            .into_iter()
+            .find(|i| i.project == "web")
+            .unwrap()
+            .live_update
+    }
+
+    #[test]
+    fn runs_a_command_after_syncing() {
+        let config = TiltExtensionConfig::default();
+        let live_update = web_live_update(r#"{ "run": ["moon", "run", "web:codegen"] }"#, &config);
+        let live_update = live_update.unwrap();
+
+        assert_eq!(
+            live_update.run,
+            Some(RunCommand::Exec(vec![
+                "moon".into(),
+                "run".into(),
+                "web:codegen".into()
+            ]))
+        );
+        // No restart unless serviceRestart asks for one.
+        assert_eq!(live_update.restart_entrypoint, None);
+        assert!(!live_update.restart_container);
+
+        let live_update = web_live_update(r#"{ "run": "moon run web:codegen" }"#, &config);
+
+        assert_eq!(
+            live_update.unwrap().run,
+            Some(RunCommand::Shell("moon run web:codegen".into()))
+        );
+    }
+
+    #[test]
+    fn run_and_restart_combine() {
+        let (mut projects, tasks) = web_with_live_update(r#"{ "run": ["codegen"] }"#);
+        let web = projects
+            .projects
+            .iter_mut()
+            .find(|p| p.id == "web")
+            .unwrap();
+        web.config.project = Some(QueryProjectMetadata {
+            metadata: serde_json::from_str(
+                r#"{ "tilt": { "image": "web", "serviceRestart": "inputs", "liveUpdate": { "run": ["codegen"] } } }"#,
+            )
+            .unwrap(),
+        });
+
+        let images = plan_images(
+            &projects,
+            &tasks,
+            &TiltExtensionConfig::default(),
+            &config_files(),
+        );
+        let live_update = images
+            .iter()
+            .find(|i| i.project == "web")
+            .unwrap()
+            .live_update
+            .as_ref()
+            .unwrap();
+
+        assert_eq!(
+            live_update.run,
+            Some(RunCommand::Exec(vec!["codegen".into()]))
+        );
+        assert!(live_update.restart_entrypoint.is_some());
+    }
+
+    #[test]
+    fn live_update_settings_enable_it_over_the_workspace_default() {
+        let config = TiltExtensionConfig {
+            live_update: false,
+            ..Default::default()
+        };
+
+        assert!(web_live_update(r#"{ "run": "codegen" }"#, &config).is_some());
+        assert!(web_live_update("true", &config).is_some());
+        assert!(web_live_update("false", &TiltExtensionConfig::default()).is_none());
+        // Settings without `run` are just the defaults.
+        assert_eq!(
+            web_live_update("{}", &TiltExtensionConfig::default())
+                .unwrap()
+                .run,
+            None
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_live_update_settings() {
+        for (setting, expected) in [
+            ("\"yes\"", "must be a boolean or an object"),
+            ("[]", "must be a boolean or an object"),
+            (
+                r#"{ "runn": "x" }"#,
+                "unknown setting <property>runn</property>",
+            ),
+            (r#"{ "run": "" }"#, "must be a command string"),
+            (r#"{ "run": [] }"#, "must be a command string"),
+            (r#"{ "run": ["a", 1] }"#, "must be a command string"),
+            (r#"{ "run": 5 }"#, "must be a command string"),
+            (r#"{ "run": [" "] }"#, "must start with a command"),
+        ] {
+            let (projects, _) = web_with_live_update(setting);
+            let error = live_update_settings_error(&projects)
+                .unwrap_or_else(|| panic!("{setting} should be rejected"));
+
+            assert!(error.contains(expected), "{setting}: {error}");
+            assert!(error.contains("<id>web</id>"), "{error}");
+        }
+
+        for setting in [
+            "true",
+            "false",
+            "{}",
+            r#"{ "run": "x" }"#,
+            r#"{ "run": ["x", "y"] }"#,
+        ] {
+            let (projects, _) = web_with_live_update(setting);
+
+            assert_eq!(live_update_settings_error(&projects), None, "{setting}");
+        }
     }
 
     #[test]

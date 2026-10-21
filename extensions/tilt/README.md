@@ -364,6 +364,17 @@ Source changes are synced into running containers instead of rebuilding the imag
 - **After syncing**, the same `serviceRestart` setting as local services decides:
   - default: the app is expected to reload itself (webpack, vite, nodemon, `node --watch`)
   - `serviceRestart: "inputs"`: the process is restarted with Tilt's [`restart_process`](https://github.com/tilt-dev/tilt-extensions/tree/master/restart_process) extension, re-running the project's `docker.file.startTask`. The extension is fetched from GitHub when the Tiltfile loads. Projects whose [declared workloads](#workloads-your-tiltfiles-deploy) are all Compose services restart the container instead (`restart_container()`), because Tilt doesn't support `restart_process` for Compose. The container re-runs its CMD, which is the same `startTask`.
+- **Running a step:** `project.tilt.liveUpdate.run` runs a command in the container after each sync, without restarting the process, e.g. a codegen step a test runner's UI picks up. It takes a command string (run through a shell) or a list (run directly), and runs before any restart above, so the two combine.
+
+  ```yaml
+  project:
+    tilt:
+      image: "tests"
+      liveUpdate:
+        run: ["moon", "run", "tests:codegen"]
+  ```
+
+  Settings under `liveUpdate` turn Live Update on for the project, even when the workspace turns it off. Files that need a rebuild still rebuild instead of syncing and running the command.
 
 Disable it per project with `project.tilt.liveUpdate: false`, or for the workspace with `liveUpdate: false`. Edits to a custom moon Dockerfile template (e.g. `.moon/Dockerfile.tera`) aren't watched; trigger a rebuild from the Tilt UI after changing one.
 
@@ -454,7 +465,7 @@ k8s_yaml(kustomize({{ project.source ~ "/k8s" | moon_path }}))
 {% endblock footer %}
 ```
 
-Override `image` (in `image.tera`) to add your own `live_update` steps, such as `run(...)` commands after syncing.
+Override `image` (in `image.tera`) to add your own `live_update` steps. A single command after syncing is a project setting (`liveUpdate.run`) and needs no override.
 
 ### Writing a section from scratch
 
@@ -483,7 +494,7 @@ Every section gets the same variables. The `image` section also gets `image`, th
 | `projects` | Every project: `id`, `source`, `tags`, `dependencies` (`id`, `scope`), `tiltfile` (if included), `resources` (targets and workload names), `selection` (what its ID selects). |
 | `gitignore` | Ignore patterns translated from `.gitignore` files (rendered as `_MOON_GITIGNORE`). |
 | `gitignore_exceptions` | `!` patterns re-including gitignored paths that must stay watched. |
-| `images` | Images: `project`, `image_ref`, `dockerfile`, `command`, `watch`, `ignore`, `live_update` (`fall_back_on`, `syncs` with `local`/`remote`, `restart_entrypoint`, `restart_container`, or none). |
+| `images` | Images: `project`, `image_ref`, `dockerfile`, `command`, `watch`, `ignore`, `live_update` (`fall_back_on`, `syncs` with `local`/`remote`, `restart_entrypoint`, `restart_container`, `run` (a string or a list), or none). |
 | `image` | In the `image` section only: the image its file is for (as in `images`). |
 | `workloads` | Declared workloads: `name`, `kind` (`k8s` or `compose`), `project`, `labels` (empty with `workloadLabels: "none"`), `resource_deps`. |
 | `excluded` | Tasks left out because they depend on a task that runs Tilt, and would otherwise have been resources: `target`, `dependency`. |
@@ -543,4 +554,4 @@ In a project's `moon.yml`, under `project.tilt` (moon's custom project metadata)
 | `dependsOn` | Runtime-only dependencies on other projects: their services and workloads are linked and brought up like a moon dependency's, but images don't follow them. See [Service dependencies](#service-dependencies-from-the-project-graph). |
 | `workloads` | Tilt resources the project's own Tiltfile deploys, by kind: `k8s` (YAML, kustomize, Helm, `helm_resource`) and `compose`. Containerizes the project. See [Workloads your Tiltfiles deploy](#workloads-your-tiltfiles-deploy). |
 | `image` | Build this project's image from moon's Dockerfile under this name (used verbatim, registry prefix included). Your own resources deploy it. |
-| `liveUpdate` | `false` rebuilds the image on every change instead of syncing. |
+| `liveUpdate` | `false` rebuilds the image on every change instead of syncing. An object enables it with settings: `run` is a command (string or list) to run in the container after each sync, without a restart. |
