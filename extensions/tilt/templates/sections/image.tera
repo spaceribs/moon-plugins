@@ -1,0 +1,46 @@
+{#- One project's container image, built from moon's generated Dockerfile
+    (`moon docker file`). The build sees the whole workspace, but only changes
+    to the project and what it depends on trigger a rebuild. Projects not in
+    `--to-edit` use the image as published, and your own Kubernetes or Compose
+    resources deploy it by name. Source changes are synced into running
+    containers (Live Update) instead of rebuilding, except for files that need
+    a rebuild (manifests, lockfiles). -#}
+{%- block image -%}
+{%- set lu = image.live_update %}
+{%- if lu and lu.restart_entrypoint %}
+load("ext://restart_process", "custom_build_with_restart")
+
+{% endif -%}
+if _moon_edit({{ image.project | starlark }}):
+{%- if lu and lu.restart_entrypoint %}
+    custom_build_with_restart(
+{%- else %}
+    custom_build(
+{%- endif %}
+        {{ image.image_ref | starlark }},
+        {{ image.command | starlark }},
+        deps = {{ image.watch | moon_path }},
+{%- if image.ignore %}
+        ignore = {{ image.ignore | moon_path }},
+{%- endif %}
+        dir = _MOON_ROOT,
+        env = _MOON_ENV,
+{%- if lu and lu.restart_entrypoint %}
+        entrypoint = {{ lu.restart_entrypoint | starlark }},
+{%- endif %}
+{%- if lu %}
+        live_update = [
+{%- if lu.fall_back_on %}
+            fall_back_on({{ lu.fall_back_on | moon_path }}),
+{%- endif %}
+{%- for sync in lu.syncs %}
+            sync({{ sync.local | moon_path }}, {{ sync.remote | starlark }}),
+{%- endfor %}
+{%- if lu.restart_container %}
+            restart_container(),
+{%- endif %}
+        ],
+{%- endif %}
+    )
+{%- endblock image %}
+{%- block footer %}{% endblock footer %}

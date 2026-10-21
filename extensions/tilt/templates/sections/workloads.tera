@@ -1,0 +1,20 @@
+{#- Workloads deployed by project Tiltfiles (`project.tilt.workloads`). -#}
+{%- block workloads -%}
+{%- if workloads %}
+# Tilt merges these with the projects' own k8s_resource/dc_resource calls, so
+# nothing they set is replaced. Compose services must be loaded before this.
+{%- for workload in workloads %}
+
+{% if workload.kind == "compose" %}dc_resource{% else %}k8s_resource{% endif %}(
+    {{ workload.name | starlark }},
+{%- if workload.labels %}
+    labels = {{ workload.labels | starlark }},
+{%- endif %}
+{%- if workload.resource_deps %}
+    resource_deps = {{ workload.resource_deps | starlark }},
+{%- endif %}
+)
+{%- endfor %}
+{%- endif %}
+{%- endblock workloads %}
+{%- block footer %}{% endblock footer %}

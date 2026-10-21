@@ -1,0 +1,27 @@
+{#- The entry file: applies the gitignore patterns everywhere, includes project
+    Tiltfiles, then the generated sections in order (workload decorations after
+    project Tiltfiles, selection last). -#}
+{%- block watch_settings -%}
+{%- if global_gitignore and gitignore %}
+# Apply moon's gitignore patterns to every resource, including ones in your own
+# Tiltfiles. Paths moon resources need despite being gitignored are re-included.
+watch_settings(ignore = _MOON_GITIGNORE + {{ gitignore_exceptions | moon_path }})
+{%- endif %}
+{%- endblock watch_settings %}
+{%- block project_tiltfiles %}
+{%- if project_tiltfiles %}
+
+# Project Tiltfiles
+{%- for path in project_tiltfiles %}
+include({{ path | moon_path }})
+{%- endfor %}
+{%- endif %}
+{%- endblock project_tiltfiles %}
+{%- block includes %}
+
+# Generated sections
+{%- for file in sections %}
+include({{ "./" ~ file | starlark }})
+{%- endfor %}
+{%- endblock includes %}
+{%- block footer %}{% endblock footer %}

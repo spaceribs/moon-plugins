@@ -50,5 +50,5 @@ With `globalGitignore` enabled (default), the generated file SHALL apply the git
 - **THEN** that resource does not re-run
 
 #### Scenario: Gitignored generated Tiltfile
-- **WHEN** `Tiltfile.moon` is gitignored and is regenerated with different contents
+- **WHEN** the generated output directory is gitignored and a file in it is regenerated with different contents
 - **THEN** Tilt still reloads it

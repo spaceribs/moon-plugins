@@ -1,0 +1,34 @@
+{%- import "moon/macros.tera" as moon -%}
+{#- The (moon) resource and a local resource per exposed moon task. -#}
+{%- block moon_resource -%}
+{%- if watch_config and config_files %}
+# Regenerates these files when moon's configuration changes while Tilt runs.
+local_resource(
+    "(moon)",
+    cmd = {{ regenerate_cmd | starlark }},
+    dir = _MOON_ROOT,
+    env = _MOON_ENV,
+    deps = {{ config_files | moon_path }},
+    auto_init = False,
+)
+{%- endif %}
+{%- endblock moon_resource %}
+{%- block resources %}
+{%- if resources %}
+
+# moon tasks
+{%- for resource in resources %}
+
+{{ moon::resource(resource=resource) }}
+{%- endfor %}
+{%- endif %}
+{%- if excluded %}
+
+# Not exposed: these tasks depend on a task that runs Tilt (directly, or
+# through another task listed here), so in Tilt they would start before it.
+{%- for task in excluded %}
+#   {{ task.target }} (depends on {{ task.dependency }})
+{%- endfor %}
+{%- endif %}
+{%- endblock resources %}
+{%- block footer %}{% endblock footer %}
