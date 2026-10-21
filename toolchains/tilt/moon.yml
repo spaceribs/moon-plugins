@@ -1,0 +1,6 @@
+# The release .wasm is a workspace-level output, named after the crate, so moon
+# can restore it from its cache along with the build (tests load it).
+tasks:
+  build:
+    outputs:
+      - "/target/wasm32-wasip1/release/tilt_toolchain.wasm"
