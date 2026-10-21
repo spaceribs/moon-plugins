@@ -1,0 +1,4 @@
+# Check out text files with LF line endings on every OS. The Tilt extension
+# embeds its Tera templates with `include_str!` (tests compare rendered output),
+# and shell scripts like scripts/e2e-tilt.sh break on CRLF under Git Bash.
+* text=auto eol=lf
