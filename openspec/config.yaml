@@ -7,7 +7,8 @@ context: |
   the call uncatchably, so guard them before calling.
   Verify behavior against real moon and Tilt, not only unit tests: several
   documented behaviors differed in practice.
-  Supported platforms: Linux and macOS. Compatibility: moon 2.6+, Tilt 0.37+.
+  Supported platforms: Linux, macOS, and Windows x64 (container image builds:
+  Linux and macOS, including WSL2). Compatibility: moon 2.6+, Tilt 0.37+.
   Commits follow Conventional Commits: they drive release-plz versions and
   changelogs, so a change's commits must use the right type and scope.
   New behavior that could surprise existing users must be opt-in.

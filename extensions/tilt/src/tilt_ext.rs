@@ -617,9 +617,13 @@ fn tilt_command(
     let manifest = version
         .as_ref()
         .and_then(|_| fs::read_to_string(format!("{}/manifest.json", toolchain::TOOL_DIR)).ok());
-    let executable =
-        toolchain::tilt_executable(&config.tilt_bin, version.as_deref(), manifest.as_deref())
-            .map_err(|error| anyhow!(error.message()))?;
+    let executable = toolchain::tilt_executable(
+        &config.tilt_bin,
+        version.as_deref(),
+        manifest.as_deref(),
+        toolchain::exe_name(get_host_environment()?.os.is_windows()),
+    )
+    .map_err(|error| anyhow!(error.message()))?;
 
     let mut input = if stream {
         ExecCommandInput::new(&executable.command, args)

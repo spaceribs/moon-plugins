@@ -17,8 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The extension's image builds use `sh`; Windows isn't supported yet.
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -30,12 +29,14 @@ jobs:
           targets: wasm32-wasip1
       # `psm` (via `pest`, used by moon's config and Tera) ships a precompiled
       # wasm object that `cc` archives with `ar`. Apple's `ar` can't index wasm
-      # objects, so linking fails with `undefined symbol: rust_psm_stack_pointer`.
-      # Use rustup's llvm-ar for wasm targets instead.
-      - if: runner.os == 'macOS'
+      # objects (linking fails with `undefined symbol: rust_psm_stack_pointer`),
+      # and Windows has no `ar`. Use rustup's llvm-ar for wasm targets instead.
+      - if: runner.os != 'Linux'
+        shell: bash
         run: |
           host=$(rustc -vV | sed -n 's/^host: //p')
-          echo "AR_wasm32_wasip1=$(rustc --print sysroot)/lib/rustlib/$host/bin/llvm-ar" >> "$GITHUB_ENV"
+          ext=$([ "$RUNNER_OS" = "Windows" ] && echo ".exe" || true)
+          echo "AR_wasm32_wasip1=$(rustc --print sysroot)/lib/rustlib/$host/bin/llvm-ar$ext" >> "$GITHUB_ENV"
       - uses: moonrepo/setup-toolchain@v0
         with:
           auto-install: true
@@ -43,6 +44,7 @@ jobs:
       # that change CI itself (which no moon task takes as an input), run
       # everything, so they never pass by testing nothing.
       - name: Run checks
+        shell: bash
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ] && git diff --quiet \
             "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" -- .github/; then
@@ -50,6 +52,11 @@ jobs:
           else
             moon run :lint :test root:format root:openspec --color
           fi
+      # Real moon and Tilt on examples/tilt-demo: web's resources come up, and
+      # file edits re-run only what's affected (see the script).
+      - name: End-to-end
+        shell: bash
+        run: bash scripts/e2e-tilt.sh
 
   commits:
     name: Commit messages
