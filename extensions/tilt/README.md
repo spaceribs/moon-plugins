@@ -30,7 +30,7 @@ Pair it with the [Tilt toolchain](../../toolchains/tilt) to install and pin the 
 ## Requirements
 
 - **moon** 2.6 or newer. Developed and tested with 2.6.2.
-- **Tilt.** Tested with 0.37.8. Install it yourself, or with the [Tilt toolchain](../../toolchains/tilt) / [proto plugin](../../tools/tilt).
+- **Tilt.** Tested with 0.37.8. Install it yourself, or with the [Tilt toolchain](../../toolchains/tilt) / [proto plugin](../../tools/tilt). With the toolchain configured, the extension runs the binary it installed for the pinned version (see `tiltBin`), so Tilt doesn't need to be on your `PATH`.
 - **Linux or macOS.** Windows isn't supported yet: container image builds run through `sh`.
 - For containers only: **Docker**, plus a local Kubernetes cluster such as [kind](https://kind.sigs.k8s.io) created with [ctlptl](https://github.com/tilt-dev/ctlptl) (`ctlptl create cluster kind --registry=ctlptl-registry`).
 
@@ -481,7 +481,7 @@ In `.moon/extensions.yml`, next to `plugin`:
 | `imageWorkdir` | `"/app"` | Image working directory sources are synced to (moon's Dockerfiles use `/app`). |
 | `dockerBin` | `"docker"` | Binary used to build images. |
 | `moonBin` | `"moon"` | moon binary used by resources. |
-| `tiltBin` | `"tilt"` | Tilt binary. If the `tilt` toolchain is configured, its version is preferred through proto shims (`PROTO_TILT_VERSION`). |
+| `tiltBin` | `"tilt"` | Tilt binary. With the default and the `tilt` toolchain configured, the binary the toolchain installed for its pinned version is used (run `moon setup` if it isn't installed yet), regardless of `PATH` or `tilt` plugins in `.prototools`. Any other value is used as-is. |
 
 ### Project settings
 
