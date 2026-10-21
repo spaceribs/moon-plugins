@@ -37,20 +37,44 @@ jobs:
           host=$(rustc -vV | sed -n 's/^host: //p')
           ext=$([ "$RUNNER_OS" = "Windows" ] && echo ".exe" || true)
           echo "AR_wasm32_wasip1=$(rustc --print sysroot)/lib/rustlib/$host/bin/llvm-ar$ext" >> "$GITHUB_ENV"
+      # Dependency builds (registry and target/), per OS. Only main saves, so
+      # pull requests restore main's cache without filling the repo's quota.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: moonrepo/setup-toolchain@v0
         with:
           auto-install: true
-      # Pull requests run what their changes affect. main, and pull requests
-      # that change CI itself (which no moon task takes as an input), run
-      # everything, so they never pass by testing nothing.
+      # moon's task cache (hashes and outputs, like each plugin's .wasm), per OS:
+      # tasks whose inputs haven't changed since the last run are skipped.
+      - uses: actions/cache@v4
+        with:
+          path: .moon/cache
+          key: moon-${{ runner.os }}-${{ github.sha }}
+          restore-keys: moon-${{ runner.os }}-
+      # Lint, format, and spec checks give the same result on every OS, so they
+      # run on Linux only; tests run everywhere.
+      #
+      # Pull requests run what their changes affect. Pull requests that change
+      # CI itself (which no moon task takes as an input) run everything without
+      # moon's cache, so a broken CI setup can't pass on cached results. main
+      # runs everything, skipping tasks moon's cache already passed.
       - name: Run checks
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ] && git diff --quiet \
-            "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" -- .github/; then
-            moon ci --color
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            targets=":lint :test root:format root:openspec"
           else
-            moon run :lint :test root:format root:openspec --color
+            targets=":test"
+          fi
+
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            moon run $targets --color
+          elif git diff --quiet "${{ github.event.pull_request.base.sha }}" \
+            "${{ github.event.pull_request.head.sha }}" -- .github/; then
+            moon ci $targets --color
+          else
+            moon run $targets --force --color
           fi
       # Real moon and Tilt on examples/tilt-demo: web's resources come up, and
       # file edits re-run only what's affected (see the script).
