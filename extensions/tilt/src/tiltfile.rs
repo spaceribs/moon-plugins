@@ -2018,6 +2018,10 @@ k8s_yaml("deploy.yaml"){% endblock footer %}"#
         ));
         assert!(output.contains("config.define_string_list(\"to-run\", args = True"));
         assert!(output.contains("config.set_enabled_resources(_moon_enabled)"));
+        assert!(output.contains(&format!(
+            "if _moon_name == \"{}\":\n        continue\n",
+            crate::images::REAPPLY_MARKER
+        )));
 
         let config = TiltExtensionConfig {
             select_by_project: false,

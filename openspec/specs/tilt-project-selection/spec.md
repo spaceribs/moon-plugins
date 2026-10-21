@@ -38,6 +38,17 @@ When any selection is active, the generated Tiltfile SHALL keep the `(moon)` reg
 - **WHEN** Tilt is running with `web` selected and the user runs `moon ext tilt -- up docs`
 - **THEN** the running instance's args become `web docs` and no new Tilt process starts
 
+### Requirement: up and focus re-apply an unchanged selection
+When `up` or `focus` leaves the running instance's Tiltfile args unchanged, they SHALL still make Tilt re-apply the selection, so edits to the generated selection (such as `project.tilt.dependsOn`) take effect. They SHALL do this by first setting the args with a `(reapply)` marker that the generated Tiltfile skips, so the same resources stay enabled in between, and then setting the real args. Changed args SHALL be set once, without the marker.
+
+#### Scenario: Dependency added while running
+- **WHEN** Tilt runs with `web` selected, `web` gains `project.tilt.dependsOn: ["ingress"]`, and the user runs `moon ext tilt -- focus web`
+- **THEN** `ingress` is enabled and no resource is disabled in between
+
+#### Scenario: Marker is not a selection
+- **WHEN** Tilt runs with args `(reapply) web`
+- **THEN** the selection is the same as for `web`
+
 ### Requirement: focus replaces the selection
 `moon ext tilt -- focus <projects>` SHALL replace the running instance's selection with the given projects, keeping its `--to-edit` choice unless new edit flags are given, and SHALL start Tilt if none is running.
 

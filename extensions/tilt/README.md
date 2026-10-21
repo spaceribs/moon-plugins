@@ -174,6 +174,8 @@ The generated file accepts project IDs as Tiltfile args, so the same selection w
 | Tilt UI | edit the Tiltfile args |
 | `tilt_config.json` | `{"to-run": ["web"]}` next to the `Tiltfile` remembers a developer's selection |
 
+Tilt only re-applies a selection when the args change, so editing `project.tilt.dependsOn` while Tilt runs doesn't enable the new dependencies by itself. Run `up` or `focus` again with the same projects: moon passes a throwaway `(reapply)` arg first, which Tilt treats as a change but selects the same resources, so nothing is disabled in between. From the Tilt CLI, `tilt args -- '(reapply)' web` followed by `tilt args -- web` does the same.
+
 Raw Tilt resource names work too (`tilt args -- web:dev`). Unknown names are rejected by Tilt, which keeps the current selection.
 
 Resources defined in a project's own `Tiltfile` aren't known to moon. List them in the project's metadata so the project ID selects them as well:

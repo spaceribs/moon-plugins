@@ -149,6 +149,9 @@ _MOON_PROJECTS = {
 _moon_enabled = []
 
 for _moon_name in _moon_cfg.get("to-run", []):
+    # moon ext tilt passes this to make Tilt re-apply an unchanged selection.
+    if _moon_name == "(reapply)":
+        continue
     _moon_enabled += _MOON_PROJECTS.get(_moon_name, [_moon_name])
 
 # Keep regenerating this file whatever is selected.
