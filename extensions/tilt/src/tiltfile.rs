@@ -237,6 +237,8 @@ fn plan_excluding(
                 .flatten()
                 .filter(|dep| config.dependency_scopes.contains(&dep.scope))
                 .map(|dep| dep.id.as_str())
+                // Runtime-only: they link services, but images don't follow them.
+                .chain(runtime_dependencies(project))
                 .collect();
 
             (project.id.as_str(), deps)
@@ -472,6 +474,66 @@ fn plan_excluding(
         workload_deps,
         excluded: vec![],
     }
+}
+
+/// Runtime-only dependencies a project declares in `project.tilt.dependsOn`:
+/// projects whose services it needs at runtime without a moon dependency
+/// (which would also put them in its image). Invalid entries are reported by
+/// [`runtime_dependency_errors`].
+fn runtime_dependencies(project: &crate::query::QueryProject) -> impl Iterator<Item = &str> {
+    project
+        .config
+        .tilt_metadata()
+        .and_then(|tilt| tilt.get("dependsOn"))
+        .and_then(|value| value.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|value| value.as_str())
+}
+
+/// Errors for `project.tilt.dependsOn` values that aren't a list of known
+/// project IDs, so a typo fails generation instead of silently leaving a
+/// service unordered.
+pub fn runtime_dependency_errors(projects: &QueryProjectsOutput) -> Option<String> {
+    let ids: BTreeSet<&str> = projects.projects.iter().map(|p| p.id.as_str()).collect();
+    let mut errors = vec![];
+
+    for project in &projects.projects {
+        let Some(value) = project
+            .config
+            .tilt_metadata()
+            .and_then(|tilt| tilt.get("dependsOn"))
+        else {
+            continue;
+        };
+        let setting = format!(
+            "<property>project.tilt.dependsOn</property> of <id>{}</id>",
+            project.id
+        );
+
+        let Some(entries) = value.as_array().filter(|a| a.iter().all(|v| v.is_string())) else {
+            errors.push(format!(
+                "{setting} must be a list of project IDs, not {value}"
+            ));
+            continue;
+        };
+
+        let unknown: Vec<String> = entries
+            .iter()
+            .filter_map(|v| v.as_str())
+            .filter(|id| !ids.contains(id))
+            .map(|id| format!("<id>{id}</id>"))
+            .collect();
+
+        if !unknown.is_empty() {
+            errors.push(format!(
+                "{setting} names projects that don't exist: {}",
+                unknown.join(", ")
+            ));
+        }
+    }
+
+    (!errors.is_empty()).then(|| errors.join("\n"))
 }
 
 /// Long-running tasks that Tilt runs with `serve_cmd`.
@@ -1381,6 +1443,114 @@ mod tests {
             "\n# Not exposed: these tasks depend on a task that runs Tilt (directly, or\n# through another task listed here), so in Tilt they would start before it.\n#   web:notify (depends on web:tilt-open)\n#   web:tilt-open (depends on web:tilt-up)\n"
         ));
         assert!(!output.contains("local_resource(\n    \"web:tilt-open\""));
+    }
+
+    /// The fixture with `docs` (no moon dependencies) selected alone, through
+    /// the `runtime` tag, and declaring `project.tilt.dependsOn`.
+    fn docs_depending_on(
+        deps: &str,
+    ) -> (QueryProjectsOutput, QueryTasksOutput, TiltExtensionConfig) {
+        let (mut projects, tasks) = fixture();
+        let docs = projects
+            .projects
+            .iter_mut()
+            .find(|p| p.id == "docs")
+            .unwrap();
+
+        docs.config.tags.push("runtime".into());
+        docs.config.project = Some(crate::query::QueryProjectMetadata {
+            metadata: serde_json::from_str(&format!(r#"{{ "tilt": {{ "dependsOn": {deps} }} }}"#))
+                .unwrap(),
+        });
+
+        let config = TiltExtensionConfig {
+            tag: "runtime".into(),
+            ..Default::default()
+        };
+
+        (projects, tasks, config)
+    }
+
+    #[test]
+    fn runtime_dependencies_link_and_pull_in_services() {
+        let (projects, tasks, config) = docs_depending_on("[]");
+
+        // Without a runtime dependency, docs comes up alone.
+        assert_eq!(
+            targets(&plan_resources(&projects, &tasks, &config)),
+            ["docs:serve"]
+        );
+
+        let (projects, tasks, config) = docs_depending_on(r#"["db"]"#);
+        let resources = plan_resources(&projects, &tasks, &config);
+
+        assert_eq!(targets(&resources), ["db:serve", "docs:serve"]);
+        assert_eq!(
+            resource(&resources, "docs:serve").resource_deps,
+            ["db:serve"]
+        );
+    }
+
+    #[test]
+    fn runtime_dependencies_follow_workloads() {
+        let (projects, tasks, config) = docs_depending_on(r#"["api"]"#);
+        let containerized = BTreeMap::from([
+            (
+                "api".to_owned(),
+                DeclaredWorkloads {
+                    k8s: vec!["api".into()],
+                    ..Default::default()
+                },
+            ),
+            (
+                "docs".to_owned(),
+                DeclaredWorkloads {
+                    k8s: vec!["docs-site".into()],
+                    ..Default::default()
+                },
+            ),
+        ]);
+        let plan = plan(&projects, &tasks, &config, &containerized);
+
+        // docs' workload waits on api's workload, through the runtime edge.
+        assert_eq!(plan.workload_deps.get("docs").unwrap(), &["api"]);
+        // A host service with a runtime edge to a containerized project waits
+        // on its workload.
+        let plan = super::plan(&projects, &tasks, &config, &k8s("api", &["api"]));
+
+        assert_eq!(
+            resource(&plan.resources, "docs:serve").resource_deps,
+            ["api"]
+        );
+    }
+
+    #[test]
+    fn reports_invalid_runtime_dependencies() {
+        let (projects, _, _) = docs_depending_on(r#"["db", "apii", "web"]"#);
+        assert_eq!(
+            runtime_dependency_errors(&projects).unwrap(),
+            "<property>project.tilt.dependsOn</property> of <id>docs</id> names projects that don't exist: <id>apii</id>"
+        );
+
+        let (projects, _, _) = docs_depending_on(r#""api""#);
+        assert_eq!(
+            runtime_dependency_errors(&projects).unwrap(),
+            "<property>project.tilt.dependsOn</property> of <id>docs</id> must be a list of project IDs, not \"api\""
+        );
+
+        let (projects, _, _) = docs_depending_on(r#"["db"]"#);
+        assert_eq!(runtime_dependency_errors(&projects), None);
+        assert_eq!(runtime_dependency_errors(&fixture().0), None);
+    }
+
+    #[test]
+    fn runtime_dependencies_are_ignored_without_linking() {
+        let (projects, tasks, mut config) = docs_depending_on(r#"["db"]"#);
+        config.link_project_dependencies = false;
+        let resources = plan_resources(&projects, &tasks, &config);
+
+        assert_eq!(targets(&resources), ["docs:serve"]);
+        assert!(resource(&resources, "docs:serve").resource_deps.is_empty());
     }
 
     #[test]

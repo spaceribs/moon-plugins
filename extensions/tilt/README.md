@@ -116,6 +116,17 @@ web:dev  waits on  api:serve  waits on  db:serve
 - **Only runtime scopes count.** By default only `production`, `development`, and `peer` dependencies are followed. `build`-scoped dependencies (tooling, codegen) are not services your app talks to. Change this with `dependencyScopes`.
 - **Only services are linked.** Non-persistent resources only follow their task `deps`.
 
+**Runtime-only dependencies.** Services often talk to each other without a moon dependency, for example a frontend calling an API through a client generated from a committed schema. A moon `dependsOn` edge would link them, but it would also put the API's source in the frontend's [image](#images). Declare the relationship for Tilt only instead:
+
+```yaml
+# docs/moon.yml
+project:
+  tilt:
+    dependsOn: ["api"]
+```
+
+It links services and [workloads](#workloads-your-tiltfiles-deploy) exactly like a moon dependency in `dependencyScopes`: `docs`'s services wait on `api`'s, `api`'s are brought up with them, and `moon ext tilt -- up docs` starts `api` too. Images don't follow it. An ID that isn't a moon project fails generation. With `linkProjectDependencies: false`, it's ignored along with moon's own dependencies.
+
 Tilt considers a local `serve_cmd` resource ready as soon as it starts. So for local services "waits on" means "starts after", not "starts after it's accepting connections". For [workloads](#workloads-your-tiltfiles-deploy), give the container a readiness probe in your manifest.
 
 ### What triggers a re-run or restart
@@ -500,6 +511,7 @@ In a project's `moon.yml`, under `project.tilt` (moon's custom project metadata)
 | --- | --- |
 | `serviceRestart` | Overrides the workspace `serviceRestart` for this project (local services and Live Update restarts). |
 | `resources` | Extra Tilt resource names (e.g. from the project's own `Tiltfile`) that the project ID selects. |
+| `dependsOn` | Runtime-only dependencies on other projects: their services and workloads are linked and brought up like a moon dependency's, but images don't follow them. See [Service dependencies](#service-dependencies-from-the-project-graph). |
 | `workloads` | Tilt resources the project's own Tiltfile deploys, by kind: `k8s` (YAML, kustomize, Helm, `helm_resource`) and `compose`. Containerizes the project. See [Workloads your Tiltfiles deploy](#workloads-your-tiltfiles-deploy). |
 | `image` | Build this project's image from moon's Dockerfile under this name (used verbatim, registry prefix included). Your own resources deploy it. |
 | `liveUpdate` | `false` rebuilds the image on every change instead of syncing. |
