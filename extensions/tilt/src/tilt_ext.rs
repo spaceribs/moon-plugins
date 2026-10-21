@@ -46,14 +46,15 @@ pub struct TiltExtensionArgs {
 pub enum TiltCommand {
     /// Generate Tilt resources from the moon task graph.
     Generate {
-        /// Exit with an error if the generated file is out of date, instead of writing it.
+        /// Exit with an error if any generated file is out of date, instead of
+        /// writing them.
         #[arg(long)]
         check: bool,
 
-        /// Workspace-relative Tera template to render with, overriding the
-        /// `template` setting.
+        /// Workspace-relative directory of section templates, overriding the
+        /// `templateDir` setting.
         #[arg(long)]
-        template: Option<String>,
+        template_dir: Option<String>,
     },
     /// Bring projects up in the single Tilt instance: adds them to a running
     /// Tilt, or starts Tilt with them. With no projects, runs everything.
@@ -159,9 +160,12 @@ pub fn execute_extension(Json(input): Json<ExecuteExtensionInput>) -> FnResult<(
     };
 
     match command {
-        TiltCommand::Generate { check, template } => {
-            if template.is_some() {
-                config.template = template;
+        TiltCommand::Generate {
+            check,
+            template_dir,
+        } => {
+            if template_dir.is_some() {
+                config.template_dir = template_dir;
             }
 
             generate(root, &config, check)?;
@@ -290,29 +294,20 @@ fn query_moon<T: DeserializeOwned>(
 
 /// The rendered generated file, and what went into it.
 struct Rendered {
-    contents: String,
+    /// Generated files, by path relative to `outputDir`.
+    files: tiltfile::GeneratedFiles,
     resources: usize,
     project_tiltfiles: usize,
+    extension_id: String,
 }
 
-/// Query moon and render the generated file with the configured template.
+/// Query moon and render the generated files, with any section templates.
 fn render_generated(root: &VirtualPath, config: &TiltExtensionConfig) -> AnyResult<Rendered> {
-    // Like moon's `docker.file.template`, a configured template must exist.
-    let custom_template = match &config.template {
-        Some(template) => {
-            let path = root.join(template);
+    if let Some(error) = tiltfile::removed_settings_error(config) {
+        return Err(anyhow!(error));
+    }
 
-            if !path.is_file() {
-                return Err(anyhow!(
-                    "Tilt template <path>{template}</path> does not exist (configure <property>template</property>)"
-                ));
-            }
-
-            Some(fs::read_to_string(path)?)
-        }
-        None => None,
-    };
-
+    let section_templates = load_section_templates(root, config)?;
     let projects: QueryProjectsOutput = query_moon(root, config, "projects")?;
 
     if let Some(error) = export::removed_k8s_settings_error(&projects) {
@@ -329,7 +324,7 @@ fn render_generated(root: &VirtualPath, config: &TiltExtensionConfig) -> AnyResu
     let config_files = find_config_files(root, &projects, config);
     let planned = tiltfile::plan_with_images(&projects, &tasks, config, &config_files);
     let extension_id = get_plugin_id()?;
-    let contents = tiltfile::render(
+    let files = tiltfile::render(
         &tiltfile::RenderInput {
             project_tiltfiles: &project_tiltfiles,
             gitignore: &gitignore,
@@ -338,23 +333,66 @@ fn render_generated(root: &VirtualPath, config: &TiltExtensionConfig) -> AnyResu
             images: &planned.images,
             workloads: &planned.workloads,
             excluded: &planned.excluded,
-            custom_template: custom_template.as_deref(),
+            section_templates: Some(&section_templates),
             ..tiltfile::RenderInput::new(&planned.resources, &projects, env!("CARGO_PKG_VERSION"))
         },
         config,
     )
     .map_err(|error| {
         anyhow!(
-            "Failed to render Tilt template <path>{}</path>: {error}",
-            config.template.as_deref().unwrap_or("(built-in)")
+            "Failed to render Tilt templates ({}): {error}",
+            match &config.template_dir {
+                Some(dir) => format!("<path>{dir}</path> and built-in"),
+                None => "built-in".into(),
+            }
         )
     })?;
 
     Ok(Rendered {
-        contents,
+        files,
         resources: planned.resources.len(),
         project_tiltfiles: project_tiltfiles.len(),
+        extension_id: extension_id.to_string(),
     })
+}
+
+/// Section templates in `templateDir`, by section name (`<section>.tera`).
+/// Like moon's `docker.file.template`, a configured directory must exist.
+fn load_section_templates(
+    root: &VirtualPath,
+    config: &TiltExtensionConfig,
+) -> AnyResult<std::collections::BTreeMap<String, String>> {
+    let mut templates = std::collections::BTreeMap::new();
+    let Some(dir) = &config.template_dir else {
+        return Ok(templates);
+    };
+    let path = root.join(dir);
+
+    if !path.is_dir() {
+        return Err(anyhow!(
+            "Tilt template directory <path>{dir}</path> does not exist (configure <property>templateDir</property>)"
+        ));
+    }
+
+    for entry in fs::read_dir(&path)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+
+        if let Some(section) = name.strip_suffix(".tera") {
+            templates.insert(section.to_owned(), fs::read_to_string(entry.path())?);
+        }
+    }
+
+    Ok(templates)
+}
+
+/// `outputDir`, workspace-relative, without `./` or a trailing `/`.
+fn output_dir(config: &TiltExtensionConfig) -> String {
+    config
+        .output_dir
+        .trim_start_matches("./")
+        .trim_end_matches('/')
+        .to_owned()
 }
 
 const CONFIG_EXTENSIONS: [&str; 7] = ["yml", "yaml", "json", "jsonc", "pkl", "hcl", "toml"];
@@ -362,7 +400,7 @@ const CONFIG_EXTENSIONS: [&str; 7] = ["yml", "yaml", "json", "jsonc", "pkl", "hc
 /// Workspace-relative files the generated file is derived from, which the
 /// `(moon)` Tilt resource watches to regenerate: workspace config
 /// (`.moon/*.<ext>` and `.moon/tasks`), each project's `moon.<ext>`, the
-/// `.gitignore` files, and a custom template. New projects matched by
+/// `.gitignore` files, and `templateDir`. New projects matched by
 /// workspace globs are picked up on the next regeneration.
 fn find_config_files(
     root: &VirtualPath,
@@ -419,8 +457,8 @@ fn find_config_files(
         }
     }
 
-    if let Some(template) = &config.template {
-        files.push(template.clone());
+    if let Some(dir) = &config.template_dir {
+        files.push(dir.trim_end_matches('/').to_owned());
     }
 
     files.sort();
@@ -459,25 +497,104 @@ struct SyncResult {
     changed: Vec<String>,
 }
 
-/// Render the generated file and write it (and a main Tiltfile if missing).
-/// Files are only written when their contents change, so Tilt doesn't
-/// reload needlessly.
+/// Render the generated files and write them (and a main Tiltfile if
+/// missing). Files are only written when their contents change, so Tilt
+/// doesn't reload needlessly. Generated files that are no longer produced,
+/// and a `Tiltfile.moon` left by earlier versions, are deleted.
 fn sync_files(root: &VirtualPath, config: &TiltExtensionConfig) -> AnyResult<SyncResult> {
     let rendered = render_generated(root, config)?;
+    let dir = output_dir(config);
     let mut changed = vec![];
 
-    if write_if_changed(&root.join(&config.output), &rendered.contents)? {
-        changed.push(config.output.clone());
+    for (path, contents) in &rendered.files {
+        let path = format!("{dir}/{path}");
+
+        if write_if_changed(&root.join(&path), contents)? {
+            changed.push(path);
+        }
+    }
+
+    for path in stale_generated_files(root, &dir, &rendered.files) {
+        fs::remove_file(root.join(&path))?;
+        changed.push(path);
+    }
+
+    if is_generated(&root.join(LEGACY_OUTPUT)) {
+        fs::remove_file(root.join(LEGACY_OUTPUT))?;
+        changed.push(LEGACY_OUTPUT.into());
+        host_log!(
+            stdout,
+            "Deleted <path>{LEGACY_OUTPUT}</path>, generated by an earlier version: the generated Tiltfiles are now in <path>{dir}</path>. In your main Tiltfile, replace <shell>include(\"./{LEGACY_OUTPUT}\")</shell> with:\n\n{}",
+            main_tiltfile_lines(config, &rendered.extension_id)
+        );
     }
 
     let main_path = root.join(&config.tiltfile);
 
-    if config.tiltfile != config.output && !main_path.exists() {
-        write_if_changed(&main_path, &tiltfile::render_main_tiltfile(config))?;
+    if !main_path.exists() {
+        write_if_changed(
+            &main_path,
+            &tiltfile::render_main_tiltfile(config, &rendered.extension_id),
+        )?;
         changed.push(config.tiltfile.clone());
     }
 
     Ok(SyncResult { rendered, changed })
+}
+
+/// Where earlier versions generated the single Tiltfile.
+const LEGACY_OUTPUT: &str = "Tiltfile.moon";
+
+/// The `local()` and `include()` lines of the main Tiltfile.
+fn main_tiltfile_lines(config: &TiltExtensionConfig, extension_id: &str) -> String {
+    tiltfile::render_main_tiltfile(config, extension_id)
+        .lines()
+        .filter(|line| line.starts_with("local(") || line.starts_with("include("))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Whether a file was written by the extension (starts with its header).
+fn is_generated(path: &VirtualPath) -> bool {
+    path.is_file()
+        && fs::read_to_string(path)
+            .is_ok_and(|contents| contents.starts_with(tiltfile::GENERATED_HEADER))
+}
+
+/// Workspace-relative paths of files in `dir` that the extension generated
+/// earlier (by their header) but doesn't produce anymore.
+fn stale_generated_files(
+    root: &VirtualPath,
+    dir: &str,
+    produced: &tiltfile::GeneratedFiles,
+) -> Vec<String> {
+    let mut stale = vec![];
+    let mut pending = vec![String::new()];
+
+    while let Some(relative) = pending.pop() {
+        let Ok(entries) = fs::read_dir(root.join(dir).join(&relative)) else {
+            continue;
+        };
+
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let path = if relative.is_empty() {
+                name
+            } else {
+                format!("{relative}/{name}")
+            };
+            let full = root.join(dir).join(&path);
+
+            if full.is_dir() {
+                pending.push(path);
+            } else if !produced.contains_key(&path) && is_generated(&full) {
+                stale.push(format!("{dir}/{path}"));
+            }
+        }
+    }
+
+    stale.sort();
+    stale
 }
 
 fn write_if_changed(path: &VirtualPath, contents: &str) -> AnyResult<bool> {
@@ -495,17 +612,34 @@ fn write_if_changed(path: &VirtualPath, contents: &str) -> AnyResult<bool> {
 }
 
 fn generate(root: &VirtualPath, config: &TiltExtensionConfig, check: bool) -> AnyResult<()> {
+    let dir = output_dir(config);
+
     if check {
         let rendered = render_generated(root, config)?;
+        let mut stale: Vec<String> = rendered
+            .files
+            .iter()
+            .map(|(path, contents)| (format!("{dir}/{path}"), contents))
+            .filter(|(path, contents)| {
+                fs::read_to_string(root.join(path)).ok().as_deref() != Some(contents.as_str())
+            })
+            .map(|(path, _)| path)
+            .collect();
 
-        if fs::read_to_string(root.join(&config.output)).unwrap_or_default() != rendered.contents {
+        stale.extend(stale_generated_files(root, &dir, &rendered.files));
+
+        if !stale.is_empty() {
             return Err(anyhow!(
-                "<path>{}</path> is out of date. Run <shell>moon sync</shell> or <shell>moon ext tilt -- generate</shell>.",
-                config.output
+                "Generated Tiltfiles are out of date: {}. Run <shell>moon sync</shell> or <shell>moon ext tilt -- generate</shell>.",
+                stale
+                    .iter()
+                    .map(|path| format!("<path>{path}</path>"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ));
         }
 
-        host_log!(stdout, "<path>{}</path> is up to date", config.output);
+        host_log!(stdout, "<path>{dir}</path> is up to date");
 
         return Ok(());
     }
@@ -514,10 +648,9 @@ fn generate(root: &VirtualPath, config: &TiltExtensionConfig, check: bool) -> An
 
     host_log!(
         stdout,
-        "Generated {} Tilt resource(s) and {} project Tiltfile include(s) in <path>{}</path>",
+        "Generated {} Tilt resource(s) and {} project Tiltfile include(s) in <path>{dir}</path>",
         result.rendered.resources,
         result.rendered.project_tiltfiles,
-        config.output
     );
 
     if result.changed.contains(&config.tiltfile) {
@@ -593,8 +726,18 @@ pub fn sync_workspace(Json(input): Json<SyncWorkspaceInput>) -> FnResult<Json<Sy
         );
     }
 
+    // Only report files that belong in version control: moon warns about
+    // changed files "that should be committed", and the output directory
+    // ignores itself.
     if let Some(result) = result {
-        output.changed_files = result.changed.iter().map(|path| root.join(path)).collect();
+        let output_dir = format!("{}/", output_dir(&config));
+
+        output.changed_files = result
+            .changed
+            .iter()
+            .filter(|path| !path.starts_with(&output_dir))
+            .map(|path| root.join(path))
+            .collect();
     }
 
     output.operations.push(op);

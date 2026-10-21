@@ -1,0 +1,27 @@
+{#- Project selection: runs last, after every resource is defined. -#}
+{%- block selection -%}
+{%- if select_by_project %}
+# Select what runs with moon project IDs (or resource names) as Tilt args.
+# A project selects its resources, and Tilt adds their resource_deps:
+#   tilt up -- web     tilt args -- web docs     tilt args --clear (everything)
+_MOON_PROJECTS = {
+{%- for project in projects %}{% if project.selection %}
+    {{ project.id | starlark }}: {{ project.selection | starlark }},
+{%- endif %}{% endfor %}
+}
+
+_moon_enabled = []
+
+for _moon_name in _moon_cfg.get("to-run", []):
+    _moon_enabled += _MOON_PROJECTS.get(_moon_name, [_moon_name])
+{%- if watch_config and config_files %}
+
+# Keep regenerating whatever is selected.
+if _moon_enabled:
+    _moon_enabled.append("(moon)")
+{%- endif %}
+
+config.set_enabled_resources(_moon_enabled)
+{%- endif %}
+{%- endblock selection %}
+{%- block footer %}{% endblock footer %}

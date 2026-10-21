@@ -9,7 +9,7 @@ It's set up to test **locally built** plugins. To try the **published** plugins 
 moon run tilt-extension:build tilt-toolchain:build
 
 cd examples/tilt-demo
-moon sync                     # writes Tiltfile.moon + Tiltfile (also happens before any `moon run`)
+moon sync                     # writes .moon/tilt/ + Tiltfile (also happens before any `moon run`)
 
 # Start the single Tilt instance, either with everything...
 moon ext tilt -- up           # (same as `tilt up`): db:serve → api:serve → web:dev, docs, ...
@@ -50,6 +50,6 @@ Then `moon ext tilt -- up api` builds the image, deploys it, and runs `db:serve`
 - `web` → `tooling` is a `build`-scoped dependency, so `tooling:watch` is not exposed.
 - `web:dev` runs `node --watch`, which reloads itself, so editing `web/src` restarts nothing in Tilt. Editing `web/schema.json` re-runs `web:codegen`, and `web:dev` restarts because codegen's outputs changed.
 - `api:serve` is a plain `node` server, so `api/moon.yml` sets `project.tilt.serviceRestart: "inputs"`.
-- `docs` has its own `Tiltfile`, which the generated file `include()`s. Its `docs` resource is selected by name.
+- `docs` has its own `Tiltfile`, which the generated entry file (`.moon/tilt/Tiltfile`) `include()`s. Its `docs` resource is selected by name.
 
 moon requires a git repository with at least one commit. After rebuilding a plugin, delete `.moon/cache` here.

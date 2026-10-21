@@ -1,0 +1,26 @@
+{#- Shared definitions, loaded by the other generated files. load() can't import
+    names starting with `_`, so they're exported under public names at the end,
+    and the other files load them back under these names. -#}
+{%- block preamble -%}
+_MOON_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), {{ root | starlark }}))
+
+def _moon_path(path):
+    return os.path.join(_MOON_ROOT, path)
+
+# Resources run moon themselves; skip moon's workspace sync so restarts
+# don't regenerate these files.
+_MOON_ENV = {"MOON_SKIP_SYNC_WORKSPACE": "true"}
+
+# Gitignored paths, which moon never hashes as task inputs.
+_MOON_GITIGNORE = [
+{%- for pattern in gitignore %}
+    {{ pattern | moon_path }},
+{%- endfor %}
+]
+{%- endblock preamble %}
+{%- block footer %}{% endblock footer %}
+
+MOON_ROOT = _MOON_ROOT
+moon_path = _moon_path
+MOON_ENV = _MOON_ENV
+MOON_GITIGNORE = _MOON_GITIGNORE

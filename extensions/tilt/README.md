@@ -22,7 +22,7 @@ Pair it with the [Tilt toolchain](../../toolchains/tilt) to install and pin the 
   - [What triggers a re-run or restart](#what-triggers-a-re-run-or-restart)
   - [One Tilt instance, selected by project](#one-tilt-instance-selected-by-project)
   - [Workloads your Tiltfiles deploy](#workloads-your-tiltfiles-deploy)
-  - [The generated Tiltfile](#the-generated-tiltfile)
+  - [The generated Tiltfiles](#the-generated-tiltfiles)
 - [Containers (opt-in)](#containers-opt-in)
 - [Templates](#templates)
 - [Configuration](#configuration)
@@ -63,12 +63,12 @@ Pair it with the [Tilt toolchain](../../toolchains/tilt) to install and pin the 
    moon ext tilt -- up web      # just web, and everything it needs
    ```
 
-   This generates `Tiltfile.moon`, creates a `Tiltfile` that includes it (if you don't have one), and runs `tilt up`. Open the Tilt UI at <http://localhost:10350>. Resources are grouped by project.
+   This generates the Tiltfiles into `.moon/tilt/`, creates a `Tiltfile` that includes them (if you don't have one), and runs `tilt up`. Open the Tilt UI at <http://localhost:10350>. Resources are grouped by project.
 
 ## Usage
 
 ```sh
-moon sync                              # (re)generate Tiltfile.moon (+ Tiltfile if missing)
+moon sync                              # (re)generate .moon/tilt/ (+ Tiltfile if missing)
 moon ext tilt -- generate [--check]    # same, on demand (--check fails if stale, for CI)
 moon ext tilt -- up                    # start Tilt with everything
 moon ext tilt -- up web api            # start Tilt with these projects, or add them to the running Tilt
@@ -218,30 +218,57 @@ The extension decorates each workload with `k8s_resource(...)` or `dc_resource(.
 
 - **Names must match what your Tiltfile deploys**, including Helm releases from the [`helm_resource`](https://github.com/tilt-dev/tilt-extensions/tree/master/helm_resource) extension, which go under `k8s`. A declared name that nothing deploys fails Tiltfile loading with Tilt's `k8s_resource specified unknown resource "<name>"`.
 - Declare each kind under its own key: `k8s_resource` and `dc_resource` only accept their own kind of resource.
-- **Load Compose files before the decorations.** For Kubernetes the order doesn't matter, but Tilt rejects `dc_resource` for a service no `docker_compose()` has loaded yet (`no Docker Compose service found with name "<name>"`). Project Tiltfiles are included before the decorations, so call `docker_compose()` there, or before `include("./Tiltfile.moon")` in your main `Tiltfile`.
+- **Load Compose files before the decorations.** For Kubernetes the order doesn't matter, but Tilt rejects `dc_resource` for a service no `docker_compose()` has loaded yet (`no Docker Compose service found with name "<name>"`). Project Tiltfiles are included before the decorations, so call `docker_compose()` there, or before `include("./.moon/tilt/Tiltfile")` in your main `Tiltfile`.
 
-### The generated Tiltfile
+### The generated Tiltfiles
 
-The extension keeps a top-level Tiltfile in sync with your workspace, so `tilt up` from the workspace root brings up everything:
+The extension keeps Tiltfiles in sync with your workspace, so `tilt up` from the workspace root brings up everything:
 
 ```
-Tiltfile            yours. Created once; include()s Tiltfile.moon. Add workspace-wide resources here.
-Tiltfile.moon       generated. Includes every project's own Tiltfile, then a resource per moon task.
+Tiltfile            yours. Created once if missing (see below). Add workspace-wide resources here.
+.moon/tilt/         generated, and ignores itself (its own .gitignore). See the layout below.
 <project>/Tiltfile  optional per-project resources (k8s_yaml, docker_compose, ...)
 ```
 
-If you already have a `Tiltfile`, add `include("./Tiltfile.moon")` to it.
+The generated output is a directory of small files (`outputDir`, default `.moon/tilt`), so a config change only touches the files for what changed:
 
-`Tiltfile.moon` is regenerated during moon's **workspace sync**: on `moon sync`, and automatically before `moon run`/`moon ci`. Adding a project, a `Tiltfile`, a tag, or a dependency updates it without extra steps.
+| File | Contents |
+| --- | --- |
+| `Tiltfile` | Entry: applies the gitignore patterns everywhere (`watch_settings`), includes project Tiltfiles, then the sections below in order |
+| `lib.star` | Shared definitions (workspace root, `moon_path`, moon's environment, gitignore patterns), loaded by the other files |
+| `args.star` | Tiltfile args (project selection and `--to-edit`), parsed once and loaded where needed |
+| `resources.tilt` | The `(moon)` resource and a `local_resource` per exposed moon task |
+| `images/<project>.tilt` | One per [image](#images) |
+| `workloads.tilt` | Decorations for [declared workloads](#workloads-your-tiltfiles-deploy), after project Tiltfiles so Compose services are loaded |
+| `selection.tilt` | Selecting projects by ID, last |
 
-- The file is only rewritten when its contents change, so a running `tilt up` reloads only when something actually changed.
+Files for empty sections (no images, no workloads) aren't written. Generated files that are no longer produced, such as a removed project's image file, are deleted. Only files carrying the generated header are touched, so anything else you put in the directory stays.
+
+**The main Tiltfile.** If you don't have one, the extension creates it:
+
+```python
+local(["moon", "ext", "tilt", "--", "generate"], quiet = True)
+include("./.moon/tilt/Tiltfile")
+```
+
+The `local()` line regenerates the (gitignored) output whenever Tilt loads the Tiltfile, so a fresh clone works with a plain `tilt up`, before `moon sync` has ever run. Generation never rewrites a file whose contents didn't change (its modification time and inode stay the same), so including files that the same Tiltfile just regenerated doesn't make Tilt reload in a loop. If you'd rather not regenerate on every load (about 2 seconds in a 30-project workspace), drop the `local()` line and rely on `moon sync`. If you already have a `Tiltfile`, add both lines to it.
+
+The output is regenerated during moon's **workspace sync**: on `moon sync`, and automatically before `moon run`/`moon ci`. Adding a project, a `Tiltfile`, a tag, or a dependency updates it without extra steps.
+
+- Files are only rewritten when their contents change, so a running `tilt up` reloads only when something actually changed.
 - Resources launched by Tilt run moon with `MOON_SKIP_SYNC_WORKSPACE=true`, so service restarts don't trigger syncs.
 - Sync failures (for example, `moon query` erroring, or a `moonBin` path that doesn't exist) are recorded on the sync operation, not raised, so they never block `moon run`. The one exception is a bare `moonBin` name (the default `moon`) that isn't on `PATH`: the host aborts that call. If moon isn't on your `PATH`, set `moonBin` to its path, or set `sync: false`.
-- In CI, moon flags files changed by a sync. Either commit `Tiltfile`/`Tiltfile.moon`, or ignore them and set `sync: false` for CI.
+- In CI, moon warns about files a sync changed "that should be committed". The extension only reports the main `Tiltfile` (when it creates one), never the self-ignored output, so CI needs no `sync: false`: commit the main `Tiltfile`, and let `.moon/tilt` be generated.
+- `moon ext tilt -- generate --check` fails, naming the files, when any generated file is out of date, missing, or no longer produced.
 - Project Tiltfiles are evaluated relative to their own directory, as with any Tilt `include()`. Resource names must be unique across the whole workspace.
 - On macOS, `cd` into the workspace with its exact directory casing. A mismatch (e.g. `~/projects` when the folder is `~/Projects`) breaks Tilt's ignore patterns ([tilt#5271](https://github.com/tilt-dev/tilt/issues/5271)).
 
-**While Tilt runs**, a `(moon)` resource watches everything the generated file is derived from: `.moon/*` config and `.moon/tasks/`, every project's `moon.yml`, the `.gitignore` files, and a custom template. When one changes, it runs `moon ext tilt -- generate`, and Tilt reloads only if the output changed. It doesn't run at startup, and stays enabled whatever projects are selected. Disable with `watchConfig: false`. New projects matched by workspace globs are picked up the next time anything regenerates the file.
+**While Tilt runs**, a `(moon)` resource watches everything the generated file is derived from: `.moon/*` config and `.moon/tasks/`, every project's `moon.yml`, the `.gitignore` files, and `templateDir`. When one changes, it runs `moon ext tilt -- generate`, and Tilt reloads only if the output changed. It doesn't run at startup, and stays enabled whatever projects are selected. Disable with `watchConfig: false`. New projects matched by workspace globs are picked up the next time anything regenerates the output.
+
+**Migrating from `Tiltfile.moon`** (versions before the `.moon/tilt` layout):
+
+- Generation deletes the old generated `Tiltfile.moon` once, and prints the lines above to put in your main `Tiltfile` in place of `include("./Tiltfile.moon")`. (Or delete your main `Tiltfile` to have it created.)
+- The `output` and `template` settings were removed. Setting either fails generation, pointing to `outputDir` and `templateDir`. Move a custom template's block overrides into [section templates](#templates).
 
 ## Containers (opt-in)
 
@@ -385,23 +412,38 @@ Labels and `resource_deps` from the project graph are still added for you. If yo
 
 ## Templates
 
-Like moon's `Dockerfile.tera`, the generated file is rendered with [Tera](https://keats.github.io/tera/docs/). The built-in template ([`templates/Tiltfile.moon.tera`](./templates/Tiltfile.moon.tera)) is used unless you configure your own:
+Like moon's `Dockerfile.tera`, the generated files are rendered with [Tera](https://keats.github.io/tera/docs/). Each file has a built-in **section template** in [`templates/sections/`](./templates/sections), registered as `moon/sections/<section>.tera`:
+
+| Section | File | Blocks |
+| --- | --- | --- |
+| `Tiltfile` | `Tiltfile` (entry) | `watch_settings`, `project_tiltfiles`, `includes` |
+| `lib` | `lib.star` | `preamble` |
+| `args` | `args.star` | `args` |
+| `resources` | `resources.tilt` | `moon_resource`, `resources` |
+| `image` | `images/<project>.tilt` | `image` |
+| `workloads` | `workloads.tilt` | `workloads` |
+| `selection` | `selection.tilt` | `selection` |
+
+Every section also has an empty `footer` block. To customize one, put a `<section>.tera` in a template directory. It replaces that section, and every other file stays built-in:
 
 ```yaml
 # .moon/extensions.yml
 tilt:
   plugin: "github://spaceribs/moon-plugins/tilt_extension"
-  template: ".moon/tilt/Tiltfile.tera"   # workspace-relative; an error if missing
+  templateDir: ".moon/tilt-templates"   # workspace-relative; an error if missing
 ```
 
-You can also try one without configuring it: `moon ext tilt -- generate --template path/to/Tiltfile.tera`. The `--template` flag takes precedence over the setting.
+You can also try one without configuring it: `moon ext tilt -- generate --template-dir path/to/templates`. The flag takes precedence over the setting. A `.tera` file in the directory that doesn't name a section is an error, so a typo can't be silently ignored.
 
-### Extending the built-in template
+Every generated file gets the generated header and the `load()` lines it needs, whatever its template renders. So section templates use the same names as the built-in ones: `_MOON_ROOT`, `_moon_path()`, `_MOON_ENV`, `_MOON_GITIGNORE`, `_moon_cfg` and `_moon_edit()`. (`lib.star` and `args.star` export them under public names, because `load()` can't import names starting with `_`. A `lib.tera` or `args.tera` written from scratch must keep those exports.)
 
-The built-in template is registered as `moon/Tiltfile.moon.tera`, so a custom template can extend it and override only the blocks it needs. For example, deploy Kubernetes manifests for every project that has services:
+### Extending a built-in section
+
+A section template can extend the built-in one and override only the blocks it needs. For example, deploy Kubernetes manifests for every project that has resources, after the workload decorations:
 
 ```jinja
-{% extends "moon/Tiltfile.moon.tera" %}
+{# .moon/tilt-templates/workloads.tera #}
+{% extends "moon/sections/workloads.tera" %}
 
 {% block footer %}
 {%- for project in projects %}{% if project.resources %}
@@ -410,56 +452,41 @@ k8s_yaml(kustomize({{ project.source ~ "/k8s" | moon_path }}))
 {% endblock footer %}
 ```
 
-Blocks, in order:
+Override `image` (in `image.tera`) to add your own `live_update` steps, such as `run(...)` commands after syncing.
 
-- `header`
-- `preamble`: defines `_MOON_ROOT`, `_moon_path()`, `_MOON_ENV` and `_MOON_GITIGNORE`, and calls `watch_settings()`
-- `args`: parses Tiltfile args into `_moon_cfg`, and defines `_moon_edit()`
-- `project_tiltfiles`
-- `moon_resource`: the `(moon)` resource
-- `resources`
-- `images`: container builds
-- `workloads`: decorations for [declared workloads](#workloads-your-tiltfiles-deploy)
-- `selection`: project selection
-- `footer`: empty by default
+### Writing a section from scratch
 
-If you override `preamble`, keep those definitions, since the other blocks and the macro use them. Override `images` to add your own `live_update` steps, such as `run(...)` commands after syncing.
-
-### Writing a template from scratch
-
-Import the macros to reuse the standard `local_resource` rendering. The macro expects `_MOON_ROOT`, `_moon_path()`, `_MOON_ENV` and `_MOON_GITIGNORE` to be defined:
+Import the macros to reuse the standard `local_resource` rendering. The names the macro uses are loaded for you:
 
 ```jinja
+{# .moon/tilt-templates/resources.tera #}
 {% import "moon/macros.tera" as moon -%}
-_MOON_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), {{ root | starlark }}))
-def _moon_path(path):
-    return os.path.join(_MOON_ROOT, path)
-_MOON_ENV = {"MOON_SKIP_SYNC_WORKSPACE": "true"}
-_MOON_GITIGNORE = {{ gitignore | moon_path }}
-
-{% for resource in resources | filter(attribute="persistent", value=true) -%}
+{% for resource in resources -%}
 {{ moon::resource(resource=resource) }}
 {% endfor %}
 ```
 
 ### Variables
 
+Every section gets the same variables. The `image` section also gets `image`, the image its file is for.
+
 | Variable | Description |
 | --- | --- |
 | `version` | Extension version. |
-| `root` | Relative path from the generated file's directory to the workspace root. |
-| `output` | Workspace-relative path of the generated file. |
+| `root` | Relative path from the output directory to the workspace root. |
+| `output_dir` | Workspace-relative path of the output directory. |
 | `tag` | The configured `tag`. |
 | `project_tiltfiles` | Workspace-relative project Tiltfiles to include. |
 | `resources` | Resources: `target`, `project`, `task`, `persistent`, `cmd`, `watch`, `only_inputs`, `ignore`, `respect_gitignore`, `resource_deps`, `labels`, `env`. |
 | `projects` | Every project: `id`, `source`, `tags`, `dependencies` (`id`, `scope`), `tiltfile` (if included), `resources` (targets and workload names), `selection` (what its ID selects). |
 | `gitignore` | Ignore patterns translated from `.gitignore` files (rendered as `_MOON_GITIGNORE`). |
 | `gitignore_exceptions` | `!` patterns re-including gitignored paths that must stay watched. |
-| `images` | Images: `project`, `image_ref`, `dockerfile`, `command`, `watch`, `ignore`, `live_update` (`fall_back_on`, `syncs` with `local`/`remote`, `restart_entrypoint`, or none). |
+| `images` | Images: `project`, `image_ref`, `dockerfile`, `command`, `watch`, `ignore`, `live_update` (`fall_back_on`, `syncs` with `local`/`remote`, `restart_entrypoint`, `restart_container`, or none). |
+| `image` | In the `image` section only: the image its file is for (as in `images`). |
 | `workloads` | Declared workloads: `name`, `kind` (`k8s` or `compose`), `project`, `labels` (empty with `workloadLabels: "none"`), `resource_deps`. |
 | `excluded` | Tasks left out because they depend on a task that runs Tilt, and would otherwise have been resources: `target`, `dependency`. |
-| `restart_process` | Whether any image restarts after syncing (loads Tilt's `restart_process` extension). |
-| `config_files` | Files the generated file is derived from (watched by `(moon)`). |
+| `sections` | In the `Tiltfile` section only: the generated section files it includes, in order. |
+| `config_files` | Files the generated output is derived from (watched by `(moon)`). |
 | `regenerate_cmd` | Command `(moon)` runs. |
 | `global_gitignore`, `watch_config`, `select_by_project` | The corresponding settings. |
 
@@ -493,9 +520,9 @@ In `.moon/extensions.yml`, next to `plugin`:
 | `selectByProject` | `true` | Accept moon project IDs as Tiltfile args (`tilt up -- web`), and `--to-edit`. |
 | `sync` | `true` | Regenerate during moon's workspace sync (`moon sync`, before `moon run`). |
 | `watchConfig` | `true` | Regenerate from a `(moon)` resource when moon config changes while Tilt runs. |
-| `output` | `"Tiltfile.moon"` | Generated file (workspace-relative). |
+| `outputDir` | `".moon/tilt"` | Directory the generated Tiltfiles are written to (workspace-relative). It ignores itself. |
 | `tiltfile` | `"Tiltfile"` | Main Tiltfile, created if missing and used by `up`/`ci`/`down`. |
-| `template` | none | Workspace-relative Tera template used to render the generated file. |
+| `templateDir` | none | Workspace-relative directory of [section templates](#templates) (`<section>.tera`). |
 | `images` | `true` | Build images for projects that opt in (see below). `false` turns containers off entirely. |
 | `liveUpdate` | `true` | Sync source changes into running containers instead of rebuilding. |
 | `imageWorkdir` | `"/app"` | Image working directory sources are synced to (moon's Dockerfiles use `/app`). |

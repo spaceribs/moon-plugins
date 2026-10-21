@@ -6,4 +6,3 @@ tilt:
   #   plugin: "github://spaceribs/moon-plugins/tilt_extension"
   plugin: "file://../../../target/wasm32-wasip1/release/tilt_extension.wasm"
   tag: "tilt"
-  output: "Tiltfile.moon"

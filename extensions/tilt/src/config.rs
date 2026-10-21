@@ -33,7 +33,7 @@ pub enum WorkloadLabels {
 /// tilt:
 ///   plugin: "github://spaceribs/moon-plugins/tilt_extension"
 ///   tag: "tilt"
-///   output: "Tiltfile.moon"
+///   outputDir: ".moon/tilt"
 /// ```
 #[derive(Clone, Debug, Deserialize, schematic::Schematic)]
 #[serde(default, rename_all = "camelCase")]
@@ -104,16 +104,25 @@ pub struct TiltExtensionConfig {
     /// Tiltfiles that already label their workloads.
     pub workload_labels: WorkloadLabels,
 
-    /// Workspace-relative path of a custom Tera template used to render the
-    /// generated file, instead of the built-in one. Custom templates can
-    /// `{% extends "moon/Tiltfile.moon.tera" %}` to override individual blocks.
+    /// Workspace-relative directory of section templates. A `<section>.tera`
+    /// there (`Tiltfile`, `lib`, `args`, `resources`, `image`, `workloads`,
+    /// `selection`) replaces that section's built-in template, and can
+    /// `{% extends "moon/sections/<section>.tera" %}` to override blocks.
+    pub template_dir: Option<String>,
+
+    /// Removed: use `templateDir`. Setting it fails generation.
     pub template: Option<String>,
 
-    /// Workspace-relative path of the generated Starlark file.
-    pub output: String,
+    /// Workspace-relative directory the generated Tiltfiles are written to.
+    /// It ignores itself (`.gitignore`), and the main Tiltfile includes its
+    /// `Tiltfile`.
+    pub output_dir: String,
 
-    /// Workspace-relative path of the main Tiltfile. Created with an
-    /// `include()` of the generated file when it does not exist.
+    /// Removed: use `outputDir`. Setting it fails generation.
+    pub output: Option<String>,
+
+    /// Workspace-relative path of the main Tiltfile. Created when it does not
+    /// exist, regenerating the output and then including it.
     pub tiltfile: String,
 
     /// Watch task inputs with Tilt and re-run/restart resources on change.
@@ -147,8 +156,10 @@ impl Default for TiltExtensionConfig {
             select_by_project: true,
             service_restart: ServiceRestart::default(),
             workload_labels: WorkloadLabels::default(),
+            template_dir: None,
             template: None,
-            output: "Tiltfile.moon".into(),
+            output_dir: ".moon/tilt".into(),
+            output: None,
             tiltfile: "Tiltfile".into(),
             watch_inputs: true,
             moon_bin: "moon".into(),

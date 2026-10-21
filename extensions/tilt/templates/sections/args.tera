@@ -1,0 +1,21 @@
+{#- Tiltfile args, parsed once here: config.define_* can't follow
+    config.parse(), so every generated file that needs them loads this one. -#}
+{%- block args -%}
+{%- if select_by_project %}
+# Tiltfile args: moon project IDs (or resource names) to run, and which
+# projects' images build from source (`--to-edit`; default all, `none` for none).
+config.define_string_list("to-run", args = True, usage = "moon project IDs or Tilt resource names")
+config.define_string_list("to-edit", usage = "moon project IDs whose images build from source")
+_moon_cfg = config.parse()
+{%- else %}
+_moon_cfg = {}
+{%- endif %}
+_moon_to_edit = _moon_cfg.get("to-edit")
+
+def _moon_edit(project):
+    return _moon_to_edit == None or (project in _moon_to_edit and "none" not in _moon_to_edit)
+{%- endblock args %}
+{%- block footer %}{% endblock footer %}
+
+MOON_CFG = _moon_cfg
+moon_edit = _moon_edit
