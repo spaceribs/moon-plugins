@@ -28,7 +28,7 @@ Each image SHALL be a `custom_build` named `project.tilt.image` (default: the pr
 - **THEN** its build runs `moon docker file api ... --defaults && docker build -t $EXPECTED_REF -f .moon/cache/tilt/api.Dockerfile .`
 
 ### Requirement: Rebuilds follow the project graph
-An image SHALL rebuild only when files change in the project's or its transitive dependencies' directories, their moon config, or root-level files their tasks take as inputs. Their task outputs, gitignored files, and extension config (`.moon/extensions.*`) MUST NOT trigger rebuilds.
+An image SHALL rebuild only when files change in the project's or its transitive dependencies' directories, their moon config, or files their tasks take as explicit inputs (anywhere in the workspace outside `.moon/`). Their task outputs, gitignored files, and extension config (`.moon/extensions.*`) MUST NOT trigger rebuilds.
 
 #### Scenario: Unrelated project edited
 - **WHEN** `web` is edited and `api` doesn't depend on `web`
@@ -37,6 +37,10 @@ An image SHALL rebuild only when files change in the project's or its transitive
 #### Scenario: Shared library edited
 - **WHEN** a library that both `web` and `api` depend on is edited
 - **THEN** both images rebuild
+
+#### Scenario: Nested input outside the closure's projects
+- **WHEN** `web` has an image, depends on `ui`, and a task of `ui` takes `/docs/ui/README.md` as an input
+- **THEN** `web`'s image watches `docs/ui/README.md`, and editing it rebuilds the image
 
 ### Requirement: Choose which images build from source
 The generated Tiltfile SHALL accept a `--to-edit` Tiltfile arg listing projects whose images build from source; absent means all, and `none` means none (published images are used). `up`, `focus`, and `ci` SHALL accept `--edit <projects>`, and `--edit-affected [--base <rev>]`, which selects the projects moon reports as affected plus their dependents, or `none` when nothing is affected.
