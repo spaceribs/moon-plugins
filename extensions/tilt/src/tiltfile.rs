@@ -227,23 +227,7 @@ fn plan_excluding(
         .map(|project| project.id.as_str())
         .collect();
 
-    let project_deps: BTreeMap<&str, Vec<&str>> = projects
-        .projects
-        .iter()
-        .map(|project| {
-            let deps = project
-                .dependencies
-                .iter()
-                .flatten()
-                .filter(|dep| config.dependency_scopes.contains(&dep.scope))
-                .map(|dep| dep.id.as_str())
-                // Runtime-only: they link services, but images don't follow them.
-                .chain(runtime_dependencies(project))
-                .collect();
-
-            (project.id.as_str(), deps)
-        })
-        .collect();
+    let project_deps = project_dependencies(projects, config);
 
     let projects_by_id: BTreeMap<&str, &crate::query::QueryProject> = projects
         .projects
@@ -548,13 +532,38 @@ fn runs_tilt(task: &QueryTask) -> bool {
     task.command == "tilt" || task.toolchains.iter().any(|id| id == "tilt")
 }
 
-/// Walk the project graph upstream from `project_id` and return the services
-/// of the nearest projects that have any. Projects without services (libraries)
-/// are walked through, so `web -> api-client -> api` links `web` to `api`.
-fn upstream_services<'a>(
+/// Each project's runtime dependencies: its moon dependencies in
+/// `dependencyScopes`, plus `project.tilt.dependsOn`.
+fn project_dependencies<'a>(
+    projects: &'a QueryProjectsOutput,
+    config: &TiltExtensionConfig,
+) -> BTreeMap<&'a str, Vec<&'a str>> {
+    projects
+        .projects
+        .iter()
+        .map(|project| {
+            let deps = project
+                .dependencies
+                .iter()
+                .flatten()
+                .filter(|dep| config.dependency_scopes.contains(&dep.scope))
+                .map(|dep| dep.id.as_str())
+                // Runtime-only: they link services, but images don't follow them.
+                .chain(runtime_dependencies(project))
+                .collect();
+
+            (project.id.as_str(), deps)
+        })
+        .collect()
+}
+
+/// Walk the project graph upstream from `project_id` and return the nearest
+/// projects that `stops_at`. Other projects (libraries, for services) are
+/// walked through, so `web -> api-client -> api` reaches `api` from `web`.
+fn upstream_projects<'a>(
     project_id: &'a str,
     project_deps: &BTreeMap<&'a str, Vec<&'a str>>,
-    services_of: impl Fn(&str) -> Vec<&'a str>,
+    stops_at: impl Fn(&str) -> bool,
 ) -> Vec<&'a str> {
     let mut found = vec![];
     let mut visited = BTreeSet::from([project_id]);
@@ -565,16 +574,62 @@ fn upstream_services<'a>(
             continue;
         }
 
-        let dep_services = services_of(dep_id);
-
-        if dep_services.is_empty() {
-            stack.extend(project_deps.get(dep_id).into_iter().flatten());
+        if stops_at(dep_id) {
+            found.push(dep_id);
         } else {
-            found.extend(dep_services);
+            stack.extend(project_deps.get(dep_id).into_iter().flatten());
         }
     }
 
     found
+}
+
+/// The services of the nearest upstream projects that have any.
+fn upstream_services<'a>(
+    project_id: &'a str,
+    project_deps: &BTreeMap<&'a str, Vec<&'a str>>,
+    services_of: impl Fn(&str) -> Vec<&'a str>,
+) -> Vec<&'a str> {
+    upstream_projects(project_id, project_deps, |id| !services_of(id).is_empty())
+        .into_iter()
+        .flat_map(services_of)
+        .collect()
+}
+
+/// Add the selections of the projects each project depends on at runtime,
+/// transitively, so a project ID selects the same whether it's chosen directly
+/// or pulled in. Tilt's `resource_deps` alone only reach the dependencies'
+/// workloads and services, not their other resources.
+fn with_upstream_selections(
+    own: &BTreeMap<&str, Vec<String>>,
+    project_deps: &BTreeMap<&str, Vec<&str>>,
+) -> BTreeMap<String, Vec<String>> {
+    own.iter()
+        .map(|(id, selection)| {
+            let mut upstream = BTreeSet::new();
+            let mut pending = vec![*id];
+
+            while let Some(current) = pending.pop() {
+                for dep in upstream_projects(current, project_deps, |dep| {
+                    own.get(dep).is_some_and(|selection| !selection.is_empty())
+                }) {
+                    if dep != *id && upstream.insert(dep) {
+                        pending.push(dep);
+                    }
+                }
+            }
+
+            let mut expanded = selection.clone();
+
+            for name in upstream.iter().flat_map(|dep| &own[dep]) {
+                if !expanded.contains(name) {
+                    expanded.push(name.clone());
+                }
+            }
+
+            (id.to_string(), expanded)
+        })
+        .collect()
 }
 
 fn create_resource(
@@ -817,6 +872,54 @@ pub fn render(input: &RenderInput, config: &TiltExtensionConfig) -> Result<Gener
         config_files,
         ..
     } = *input;
+    let own_resources = |project: &crate::query::QueryProject| -> Vec<String> {
+        resources
+            .iter()
+            .filter(|resource| resource.project == project.id)
+            .map(|resource| resource.target.clone())
+            .chain(declared_workloads(project).names().map(String::from))
+            .collect()
+    };
+    let own_selections: BTreeMap<&str, Vec<String>> = input
+        .projects
+        .projects
+        .iter()
+        .map(|project| {
+            let selection = own_resources(project)
+                .into_iter()
+                .chain(
+                    project
+                        .config
+                        .tilt_metadata()
+                        .and_then(|tilt| tilt.get("resources"))
+                        .and_then(|value| value.as_array())
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|value| value.as_str().map(String::from)),
+                )
+                .fold(vec![], |mut selection, name| {
+                    if !selection.contains(&name) {
+                        selection.push(name);
+                    }
+                    selection
+                });
+
+            (project.id.as_str(), selection)
+        })
+        .collect();
+    // The narrower, own-resources-only selection when upstream services aren't
+    // pulled in, or project dependencies aren't followed at all.
+    let selections = if config.link_project_dependencies && config.include_upstream_services {
+        with_upstream_selections(
+            &own_selections,
+            &project_dependencies(input.projects, config),
+        )
+    } else {
+        own_selections
+            .into_iter()
+            .map(|(id, selection)| (id.to_string(), selection))
+            .collect()
+    };
     let projects = input
         .projects
         .projects
@@ -826,13 +929,6 @@ pub fn render(input: &RenderInput, config: &TiltExtensionConfig) -> Result<Gener
                 "" | "." => "Tiltfile".to_owned(),
                 source => format!("{source}/Tiltfile"),
             };
-
-            let own_resources: Vec<String> = resources
-                .iter()
-                .filter(|resource| resource.project == project.id)
-                .map(|resource| resource.target.clone())
-                .chain(declared_workloads(project).names().map(String::from))
-                .collect();
 
             TemplateProject {
                 id: project.id.clone(),
@@ -848,25 +944,8 @@ pub fn render(input: &RenderInput, config: &TiltExtensionConfig) -> Result<Gener
                     })
                     .collect(),
                 tiltfile: project_tiltfiles.contains(&tiltfile).then_some(tiltfile),
-                resources: own_resources.clone(),
-                selection: own_resources
-                    .into_iter()
-                    .chain(
-                        project
-                            .config
-                            .tilt_metadata()
-                            .and_then(|tilt| tilt.get("resources"))
-                            .and_then(|value| value.as_array())
-                            .into_iter()
-                            .flatten()
-                            .filter_map(|value| value.as_str().map(String::from)),
-                    )
-                    .fold(vec![], |mut selection, name| {
-                        if !selection.contains(&name) {
-                            selection.push(name);
-                        }
-                        selection
-                    }),
+                resources: own_resources(project),
+                selection: selections[&project.id].clone(),
             }
         })
         .collect();
@@ -2014,7 +2093,7 @@ k8s_yaml("deploy.yaml"){% endblock footer %}"#
         let output = render(&RenderInput::new(&resources, &projects, "0.0.0"), &config).unwrap();
 
         assert!(output.contains(
-            "_MOON_PROJECTS = {\n    \"api\": [\"api:build\", \"api:serve\"],\n    \"db\": [\"db:serve\"],\n    \"docs\": [\"docs-site\"],\n    \"web\": [\"web:codegen\", \"web:dev\"],\n}\n"
+            "_MOON_PROJECTS = {\n    \"api\": [\"api:build\", \"api:serve\", \"db:serve\"],\n    \"api-client\": [\"api:build\", \"api:serve\", \"db:serve\"],\n    \"db\": [\"db:serve\"],\n    \"docs\": [\"docs-site\"],\n    \"web\": [\"web:codegen\", \"web:dev\", \"api:build\", \"api:serve\", \"db:serve\"],\n}\n"
         ));
         assert!(output.contains("config.define_string_list(\"to-run\", args = True"));
         assert!(output.contains("config.set_enabled_resources(_moon_enabled)"));
@@ -2031,6 +2110,152 @@ k8s_yaml("deploy.yaml"){% endblock footer %}"#
         let output = render(&RenderInput::new(&resources, &projects, "0.0.0"), &config).unwrap();
 
         assert!(!output.contains("config.parse()"));
+    }
+
+    /// Add a project that depends on `deps` and selects `resources` (from its
+    /// own Tiltfile), and no tasks.
+    fn add_project(
+        projects: &mut QueryProjectsOutput,
+        id: &str,
+        deps: &[&str],
+        resources: &[&str],
+    ) {
+        projects.projects.push(crate::query::QueryProject {
+            id: id.into(),
+            source: id.into(),
+            config: crate::query::QueryProjectConfig {
+                project: Some(crate::query::QueryProjectMetadata {
+                    metadata: serde_json::from_value(
+                        serde_json::json!({ "tilt": { "resources": resources } }),
+                    )
+                    .unwrap(),
+                }),
+                ..Default::default()
+            },
+            dependencies: Some(
+                deps.iter()
+                    .map(|id| crate::query::QueryProjectDep {
+                        id: id.to_string(),
+                        scope: "production".into(),
+                    })
+                    .collect(),
+            ),
+        });
+    }
+
+    /// The `_MOON_PROJECTS` entry for `id`.
+    fn selection_line(output: &str, id: &str) -> String {
+        output
+            .lines()
+            .find(|line| line.starts_with(&format!("    \"{id}\": [")))
+            .unwrap_or_else(|| panic!("no selection for {id}"))
+            .trim()
+            .to_owned()
+    }
+
+    #[test]
+    fn selection_includes_dependencies_resources() {
+        let (mut projects, tasks) = fixture();
+
+        // ingress applies its routes with a resource of its own, which a
+        // `resource_deps` link from web's workload wouldn't bring in.
+        add_project(
+            &mut projects,
+            "ingress",
+            &[],
+            &["ingress", "ingress-routes"],
+        );
+        add_project(&mut projects, "web-app", &["ingress"], &["web-app"]);
+        // Through a library, and on to what the dependency itself depends on.
+        add_project(&mut projects, "lib", &["web-app"], &[]);
+        add_project(&mut projects, "site", &["lib"], &["site"]);
+
+        let config = TiltExtensionConfig::default();
+        let resources = plan_resources(&projects, &tasks, &config);
+        let output = render(&RenderInput::new(&resources, &projects, "0.0.0"), &config).unwrap();
+
+        assert_eq!(
+            selection_line(&output, "ingress"),
+            "\"ingress\": [\"ingress\", \"ingress-routes\"],"
+        );
+        assert_eq!(
+            selection_line(&output, "web-app"),
+            "\"web-app\": [\"web-app\", \"ingress\", \"ingress-routes\"],"
+        );
+        assert_eq!(
+            selection_line(&output, "site"),
+            "\"site\": [\"site\", \"ingress\", \"ingress-routes\", \"web-app\"],"
+        );
+    }
+
+    #[test]
+    fn selection_follows_runtime_dependencies() {
+        let (projects, tasks, config) = docs_depending_on(r#"["db"]"#);
+        let resources = plan_resources(&projects, &tasks, &config);
+        let output = render(&RenderInput::new(&resources, &projects, "0.0.0"), &config).unwrap();
+
+        assert_eq!(
+            selection_line(&output, "docs"),
+            "\"docs\": [\"docs:serve\", \"db:serve\"],"
+        );
+    }
+
+    #[test]
+    fn selection_ignores_cycles_and_build_dependencies() {
+        let (mut projects, tasks) = fixture();
+
+        add_project(&mut projects, "a", &["b"], &["a"]);
+        add_project(&mut projects, "b", &["a"], &["b"]);
+        add_project(&mut projects, "codegen", &[], &["codegen"]);
+        let a = projects.projects.len() - 3;
+        projects.projects[a]
+            .dependencies
+            .as_mut()
+            .unwrap()
+            .push(crate::query::QueryProjectDep {
+                id: "codegen".into(),
+                scope: "build".into(),
+            });
+
+        let config = TiltExtensionConfig::default();
+        let resources = plan_resources(&projects, &tasks, &config);
+        let output = render(&RenderInput::new(&resources, &projects, "0.0.0"), &config).unwrap();
+
+        assert_eq!(selection_line(&output, "a"), "\"a\": [\"a\", \"b\"],");
+        assert_eq!(selection_line(&output, "b"), "\"b\": [\"b\", \"a\"],");
+    }
+
+    #[test]
+    fn selection_stays_narrow_without_upstream_services() {
+        let (mut projects, tasks) = fixture();
+
+        add_project(
+            &mut projects,
+            "ingress",
+            &[],
+            &["ingress", "ingress-routes"],
+        );
+        add_project(&mut projects, "web-app", &["ingress"], &["web-app"]);
+
+        for config in [
+            TiltExtensionConfig {
+                include_upstream_services: false,
+                ..Default::default()
+            },
+            TiltExtensionConfig {
+                link_project_dependencies: false,
+                ..Default::default()
+            },
+        ] {
+            let resources = plan_resources(&projects, &tasks, &config);
+            let output =
+                render(&RenderInput::new(&resources, &projects, "0.0.0"), &config).unwrap();
+
+            assert_eq!(
+                selection_line(&output, "web-app"),
+                "\"web-app\": [\"web-app\"],"
+            );
+        }
     }
 
     #[test]
@@ -2063,7 +2288,7 @@ k8s_yaml("deploy.yaml"){% endblock footer %}"#
         )
         .unwrap();
 
-        assert!(output.contains("    \"api\": [\"api\", \"api-worker\"],\n"));
+        assert!(output.contains("    \"api\": [\"api\", \"api-worker\", \"db:serve\"],\n"));
     }
 
     #[test]

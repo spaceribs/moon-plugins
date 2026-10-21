@@ -145,9 +145,10 @@ dc_resource(
 # A project selects its resources, and Tilt adds their resource_deps:
 #   tilt up -- web     tilt args -- web docs     tilt args --clear (everything)
 _MOON_PROJECTS = {
-    "api": ["api", "api-cache"],
+    "api": ["api", "api-cache", "db:serve"],
+    "api-client": ["api", "api-cache", "db:serve"],
     "db": ["db:serve"],
-    "web": ["web:codegen", "web:dev"],
+    "web": ["web:codegen", "web:dev", "api", "api-cache", "db:serve"],
 }
 
 _moon_enabled = []
