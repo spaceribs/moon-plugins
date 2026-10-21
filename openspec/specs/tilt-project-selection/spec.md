@@ -24,6 +24,21 @@ With `selectByProject` enabled (default), the generated Tiltfile SHALL accept mo
 - **WHEN** `selectByProject` is `false`
 - **THEN** the generated Tiltfile doesn't call `config.parse()`
 
+### Requirement: A project selects its dependencies' resources
+A project's selection SHALL also include the selections of the projects it depends on at runtime (moon dependencies in `dependencyScopes`, plus `project.tilt.dependsOn`), walked transitively and through projects with nothing to select, so a project ID selects the same whether chosen directly or pulled in. With `includeUpstreamServices: false` or `linkProjectDependencies: false`, a project ID SHALL select only its own resources.
+
+#### Scenario: Dependency's other resources
+- **WHEN** `web` depends on `ingress`, which declares workload `ingress` and `project.tilt.resources: ["ingress-routes"]`
+- **THEN** selecting `web` also enables `ingress-routes`
+
+#### Scenario: Transitive dependency
+- **WHEN** `site` depends on `lib` (nothing to select), which depends on `web`, which depends on `ingress`
+- **THEN** selecting `site` enables the resources of `web` and `ingress`
+
+#### Scenario: Upstream selection disabled
+- **WHEN** `includeUpstreamServices` is `false` and `web` depends on `ingress`
+- **THEN** selecting `web` enables only `web`'s own resources, plus Tilt's `resource_deps`
+
 ### Requirement: The regenerate resource stays enabled
 When any selection is active, the generated Tiltfile SHALL keep the `(moon)` regenerate resource enabled.
 

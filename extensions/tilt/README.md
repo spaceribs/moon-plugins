@@ -112,7 +112,7 @@ web:dev  waits on  api:serve  waits on  db:serve
 ```
 
 - **Libraries are walked through.** Projects without services (like `api-client`) are skipped, and the walk continues to their own dependencies until it reaches projects that have services.
-- **Upstream services are always included.** `db:serve` isn't tagged, but `api:serve` depends on it, so it's added to Tilt. Set `includeUpstreamServices: false` to only link services that are already selected.
+- **Upstream services are always included.** `db:serve` isn't tagged, but `api:serve` depends on it, so it's added to Tilt. Set `includeUpstreamServices: false` to only link services that are already selected. Selecting a project also selects its dependencies' other resources (see [Selecting what runs](#one-tilt-instance-selected-by-project)); that setting keeps the selection to the project's own.
 - **Only runtime scopes count.** By default only `production`, `development`, and `peer` dependencies are followed. `build`-scoped dependencies (tooling, codegen) are not services your app talks to. Change this with `dependencyScopes`.
 - **Only services are linked.** Non-persistent resources only follow their task `deps`.
 
@@ -163,7 +163,7 @@ project:
 
 ### One Tilt instance, selected by project
 
-There is always a single Tilt instance for the workspace. You choose what runs in it by **moon project ID**. A project selects its resources, and Tilt brings up their dependencies too. Everything else is disabled, not stopped and restarted.
+There is always a single Tilt instance for the workspace. You choose what runs in it by **moon project ID**. A project selects its resources and those of the projects it depends on, and Tilt brings up their task dependencies too. Everything else is disabled, not stopped and restarted.
 
 The generated file accepts project IDs as Tiltfile args, so the same selection works from any entry point:
 
@@ -173,6 +173,8 @@ The generated file accepts project IDs as Tiltfile args, so the same selection w
 | Tilt CLI | `tilt up -- web`, `tilt args -- web docs`, `tilt args --clear` (everything) |
 | Tilt UI | edit the Tiltfile args |
 | `tilt_config.json` | `{"to-run": ["web"]}` next to the `Tiltfile` remembers a developer's selection |
+
+A project's selection includes the selections of the projects it depends on at runtime (moon `dependsOn` in `dependencyScopes`, plus `project.tilt.dependsOn`), followed transitively and through libraries like [service dependencies](#service-dependencies-from-the-project-graph). So if `web` depends on `ingress`, and `ingress` lists an `ingress-routes` resource in `project.tilt.resources`, `moon ext tilt -- up web` starts the routes too, not only `ingress`'s workload. Set `includeUpstreamServices: false` (or `linkProjectDependencies: false`) and a project ID selects only its own resources.
 
 Tilt only re-applies a selection when the args change, so editing `project.tilt.dependsOn` while Tilt runs doesn't enable the new dependencies by itself. Run `up` or `focus` again with the same projects: moon passes a throwaway `(reapply)` arg first, which Tilt treats as a change but selects the same resources, so nothing is disabled in between. From the Tilt CLI, `tilt args -- '(reapply)' web` followed by `tilt args -- web` does the same.
 
