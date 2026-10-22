@@ -47,7 +47,7 @@ moon and the extension don't need a `tilt` plugin in `.prototools`. If you regis
 
 ## In container images
 
-moon loads every toolchain configured in `.moon/toolchains.*` whenever it runs, including inside images built from `moon docker file`, where no Tilt runs. In a container capped at 1 CPU, loading this plugin took about 4.5 seconds of each cold `moon run` start. That's moon behaviour and this plugin can't skip it. In image-heavy workspaces, allow for it in liveness probes. Setting `MOON_SKIP_SYNC_WORKSPACE=true` in the image's start stage at least avoids loading the Tilt extension there too (see the extension's [Plugins inside the image build](../../extensions/tilt/README.md#plugins-inside-the-image-build)).
+moon loads every toolchain configured in `.moon/toolchains.*` whenever it runs, including inside images built from `moon docker file`, where no Tilt runs. In a container capped at 1 CPU, loading this plugin took about 4.5 seconds of each cold `moon run` start. That's moon behaviour and this plugin can't skip it. In image-heavy workspaces, allow for it in startup and liveness probes, for example with a Kubernetes `startupProbe`. moon also loads the [Tilt extension](../../extensions/tilt/README.md#plugins-inside-the-image-build) there, about 7 seconds more.
 
 ## Configuration
 

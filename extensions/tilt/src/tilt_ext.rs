@@ -872,7 +872,7 @@ pub fn sync_workspace(Json(input): Json<SyncWorkspaceInput>) -> FnResult<Json<Sy
     let root = &input.context.workspace_root;
     let mut output = SyncOutput::default();
 
-    // Inside an image (`moon run` syncs before the start task), the workspace
+    // Inside an image (`moon run` syncs before the build and start tasks), the workspace
     // is the pruned `moon docker scaffold` output: other projects' Dockerfiles
     // are missing, so generation would fail, and nothing there reads it.
     if !config.sync || is_docker_scaffold(root) {
