@@ -25,7 +25,7 @@ With `selectByProject` enabled (default), the generated Tiltfile SHALL accept mo
 - **THEN** the generated Tiltfile doesn't call `config.parse()`
 
 ### Requirement: A project selects its dependencies' resources
-A project's selection SHALL also include the selections of the projects it depends on at runtime (moon dependencies in `dependencyScopes`, plus `project.tilt.dependsOn`), walked transitively and through projects with nothing to select, so a project ID selects the same whether chosen directly or pulled in. With `includeUpstreamServices: false` or `linkProjectDependencies: false`, a project ID SHALL select only its own resources.
+A project's selection SHALL also include the services, declared workloads, and `project.tilt.resources` (when its project Tiltfile is included) of the projects it depends on at runtime (moon dependencies in `dependencyScopes`, plus `project.tilt.dependsOn`), walked transitively. Their other tasks MUST NOT be added. With `includeUpstreamServices: false` or `linkProjectDependencies: false`, a project ID SHALL select only its own resources.
 
 #### Scenario: Dependency's other resources
 - **WHEN** `web` depends on `ingress`, which declares workload `ingress` and `project.tilt.resources: ["ingress-routes"]`
@@ -34,6 +34,14 @@ A project's selection SHALL also include the selections of the projects it depen
 #### Scenario: Transitive dependency
 - **WHEN** `site` depends on `lib` (nothing to select), which depends on `web`, which depends on `ingress`
 - **THEN** selecting `site` enables the resources of `web` and `ingress`
+
+#### Scenario: Dependency's build task
+- **WHEN** `web` depends on `api`, which has a service `api:serve` and a build task `api:build`
+- **THEN** selecting `web` adds `api:serve` but not `api:build`
+
+#### Scenario: Dependency without an included Tiltfile
+- **WHEN** `web` depends on `ingress`, which lists `project.tilt.resources: ["ingress-routes"]` but has no included project Tiltfile
+- **THEN** selecting `web` doesn't add `ingress-routes`, and selecting `ingress` still does
 
 #### Scenario: Upstream selection disabled
 - **WHEN** `includeUpstreamServices` is `false` and `web` depends on `ingress`
