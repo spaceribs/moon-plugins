@@ -374,7 +374,7 @@ Source changes are synced into running containers instead of rebuilding the imag
         run: ["moon", "run", "tests:codegen"]
   ```
 
-  Settings under `liveUpdate` turn Live Update on for the project, even when the workspace turns it off. Files that need a rebuild still rebuild instead of syncing and running the command.
+  A `run` command turns Live Update on for the project, even when the workspace turns it off. Files that need a rebuild still rebuild instead of syncing and running the command. Generation warns if the command can't run: the project has no image, images are off, or there is nothing to sync (the project and its dependencies are the workspace root).
 
 Disable it per project with `project.tilt.liveUpdate: false`, or for the workspace with `liveUpdate: false`. Edits to a custom moon Dockerfile template (e.g. `.moon/Dockerfile.tera`) aren't watched; trigger a rebuild from the Tilt UI after changing one.
 
@@ -465,7 +465,7 @@ k8s_yaml(kustomize({{ project.source ~ "/k8s" | moon_path }}))
 {% endblock footer %}
 ```
 
-Override `image` (in `image.tera`) to add your own `live_update` steps. A single command after syncing is a project setting (`liveUpdate.run`) and needs no override.
+Override `image` (in `image.tera`) to add your own `live_update` steps. A single command after syncing is a project setting (`liveUpdate.run`) and needs no override. An `image` override replaces the built-in one, so it has to render `image.live_update.run` itself (as `run(...)`) for that setting to take effect.
 
 ### Writing a section from scratch
 
@@ -554,4 +554,4 @@ In a project's `moon.yml`, under `project.tilt` (moon's custom project metadata)
 | `dependsOn` | Runtime-only dependencies on other projects: their services and workloads are linked and brought up like a moon dependency's, but images don't follow them. See [Service dependencies](#service-dependencies-from-the-project-graph). |
 | `workloads` | Tilt resources the project's own Tiltfile deploys, by kind: `k8s` (YAML, kustomize, Helm, `helm_resource`) and `compose`. Containerizes the project. See [Workloads your Tiltfiles deploy](#workloads-your-tiltfiles-deploy). |
 | `image` | Build this project's image from moon's Dockerfile under this name (used verbatim, registry prefix included). Your own resources deploy it. |
-| `liveUpdate` | `false` rebuilds the image on every change instead of syncing. An object enables it with settings: `run` is a command (string or list) to run in the container after each sync, without a restart. |
+| `liveUpdate` | `false` rebuilds the image on every change instead of syncing. An object holds settings: `run` is a command (string or list) to run in the container after each sync, without a restart, and turns Live Update on. Any other value (such as `"false"`) fails generation. |
