@@ -6,7 +6,11 @@
 # projects' images build from source (`--to-edit`; default all, `none` for none).
 config.define_string_list("to-run", args = True, usage = "moon project IDs or Tilt resource names")
 config.define_string_list("to-edit", usage = "moon project IDs whose images build from source")
-_moon_cfg = config.parse()
+_moon_cfg = dict(config.parse())
+
+# moon ext tilt passes this to make Tilt re-apply an unchanged selection.
+if "to-run" in _moon_cfg:
+    _moon_cfg["to-run"] = [name for name in _moon_cfg["to-run"] if name != "(reapply)"]
 {%- else %}
 _moon_cfg = {}
 {%- endif %}

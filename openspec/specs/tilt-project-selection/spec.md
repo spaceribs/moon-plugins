@@ -39,7 +39,7 @@ When any selection is active, the generated Tiltfile SHALL keep the `(moon)` reg
 - **THEN** the running instance's args become `web docs` and no new Tilt process starts
 
 ### Requirement: up and focus re-apply an unchanged selection
-When `up` or `focus` leaves the running instance's Tiltfile args unchanged, they SHALL still make Tilt re-apply the selection, so edits to the generated selection (such as `project.tilt.dependsOn`) take effect. They SHALL do this by first setting the args with a `(reapply)` marker that the generated Tiltfile skips, so the same resources stay enabled in between, and then setting the real args. Changed args SHALL be set once, without the marker.
+When `up` or `focus` leaves the running instance's Tiltfile args unchanged, they SHALL still make Tilt re-apply the selection, so edits to the generated selection (such as `project.tilt.dependsOn`) take effect. They SHALL do this by first setting the args with a `(reapply)` marker, which the generated Tiltfile drops where it parses its args (so neither the selection nor `MOON_CFG` sees it, and the same resources stay enabled in between), waiting for Tilt to start loading the Tiltfile, and then setting the real args. Changed args SHALL be set once, without the marker. A marker left in the running args (say, if setting the real args failed) SHALL NOT be treated as a project.
 
 #### Scenario: Dependency added while running
 - **WHEN** Tilt runs with `web` selected, `web` gains `project.tilt.dependsOn: ["ingress"]`, and the user runs `moon ext tilt -- focus web`
@@ -47,7 +47,11 @@ When `up` or `focus` leaves the running instance's Tiltfile args unchanged, they
 
 #### Scenario: Marker is not a selection
 - **WHEN** Tilt runs with args `(reapply) web`
-- **THEN** the selection is the same as for `web`
+- **THEN** the selection is the same as for `web`, and `MOON_CFG["to-run"]` is `["web"]`
+
+#### Scenario: Leftover marker
+- **WHEN** Tilt runs with args `(reapply) web` and the user runs `moon ext tilt -- up docs`
+- **THEN** the running instance's args become `web docs`
 
 ### Requirement: focus replaces the selection
 `moon ext tilt -- focus <projects>` SHALL replace the running instance's selection with the given projects, keeping its `--to-edit` choice unless new edit flags are given, and SHALL start Tilt if none is running.
