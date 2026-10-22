@@ -49,6 +49,10 @@ An image SHALL rebuild only when the project's `Dockerfile` changes, or files ch
 - **WHEN** `web` has an image, depends on `ui`, and a task of `ui` takes `/docs/ui/README.md` as an input
 - **THEN** `web`'s image watches `docs/ui/README.md`, and editing it rebuilds the image
 
+#### Scenario: Workspace-root dependency files (known limitation)
+- **WHEN** `web` has an image, and the workspace root's lockfile (e.g. `pnpm-lock.yaml`), workspace or catalog manifest (e.g. `pnpm-workspace.yaml`), or root manifest (e.g. `package.json`) changes, and no task in `web`'s dependency closure takes it as an explicit input
+- **THEN** `web`'s image doesn't watch it and doesn't rebuild, even though `moon docker setup` installs the image's dependencies from it; the user rebuilds with `tilt trigger` or by restarting Tilt
+
 ### Requirement: Choose which images build from source
 The generated Tiltfile SHALL accept a `--to-edit` Tiltfile arg listing projects whose images build from source; absent means all, and `none` means none (published images are used). `up`, `focus`, and `ci` SHALL accept `--edit <projects>`, and `--edit-affected [--base <rev>]`, which selects the projects moon reports as affected plus their dependents, or `none` when nothing is affected.
 

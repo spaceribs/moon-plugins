@@ -432,6 +432,14 @@ Each image is a `custom_build`. It runs `docker build -f <project>/Dockerfile` w
 
 So editing one service never rebuilds unrelated images, while a change to a shared library rebuilds every image that uses it.
 
+**Not a rebuild trigger: workspace-root dependency files.** Unless a task takes them as explicit inputs, these don't rebuild images, and Live Update syncs past them instead of rebuilding ([#38](https://github.com/spaceribs/moon-plugins/issues/38)):
+
+- the lockfile (`pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `bun.lock`, `Cargo.lock`, `go.sum`, `uv.lock`)
+- the workspace or catalog manifest (`pnpm-workspace.yaml`, `go.work`)
+- the root `package.json`, `Cargo.toml` or `pyproject.toml`
+
+moon hashes them through the toolchain rather than as task inputs, so they aren't in any project's graph, yet `moon docker setup` installs every image's dependencies from them. They change more often than the root manifest suggests. A pnpm catalog bump, `pnpm update`, or a lockfile-only dependency update edits only these root files and no project's `package.json`. The most common way to hit this is pulling someone else's dependency change while Tilt is running. Running images keep the old dependencies until something else rebuilds them. After such a change, run `tilt trigger <resource>` for the affected images, or restart Tilt.
+
 Every build sends the whole workspace to Docker, so keep the context small with a `.dockerignore` at the workspace root:
 
 ```
@@ -479,6 +487,8 @@ Source changes are synced into running containers instead of rebuilding the imag
 
 - **Synced:** the project's directory and those of the projects it depends on, to the same path under the image's `WORKDIR` (`/app` in moon's Dockerfiles), e.g. `api` → `/app/api`.
 - **Full rebuild instead:** moon config, root-level task inputs (lockfiles), explicit task input files (manifests like `package.json`), and the project's `Dockerfile`, because those change dependencies or the image itself.
+
+  Workspace-root dependency files (the lockfile, `pnpm-workspace.yaml` or `go.work`, and the root `package.json`, `Cargo.toml` or `pyproject.toml`) are not on this list unless a task takes them as explicit inputs, so a change to them is neither synced nor rebuilt. Run `tilt trigger <resource>` or restart Tilt (see [Images](#images)).
 - **After syncing**, the same `serviceRestart` setting as local services decides:
   - default: the app is expected to reload itself (webpack, vite, nodemon, `node --watch`)
   - `serviceRestart: "inputs"`: the process is restarted with Tilt's [`restart_process`](https://github.com/tilt-dev/tilt-extensions/tree/master/restart_process) extension, re-running the project's `docker.file.startTask`. The extension is fetched from GitHub when the Tiltfile loads. Projects whose [declared workloads](#workloads-your-tiltfiles-deploy) are all Compose services restart the container instead (`restart_container()`), because Tilt doesn't support `restart_process` for Compose. The container re-runs its CMD, which is the same `startTask`.
