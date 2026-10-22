@@ -5817,7 +5817,7 @@ dependencies = [
 
 [[package]]
 name = "tilt_extension"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "extism-pdk",
  "moon_common",

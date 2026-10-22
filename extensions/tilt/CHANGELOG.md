@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.1](https://github.com/spaceribs/moon-plugins/compare/tilt_extension-v0.6.0...tilt_extension-v0.6.1) - 2026-10-22
+
+### Fixed
+
+- *(tilt)* run the toolchain's Tilt by its real path on the host
+
+### Other
+
+- *(tilt)* make the quick start work as written
+- tighten the READMEs and fix inaccuracies
+
 ## [0.6.0](https://github.com/spaceribs/moon-plugins/compare/tilt_extension-v0.5.0...tilt_extension-v0.6.0) - 2026-10-22
 
 ### Added
