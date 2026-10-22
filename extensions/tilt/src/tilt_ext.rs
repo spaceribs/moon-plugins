@@ -860,13 +860,22 @@ fn export_k8s(
 
 // SYNC (`moon sync`, and before `moon run`)
 
+/// Whether the workspace is `moon docker scaffold` output, which writes
+/// `dockerManifest.json` to the workspace root it copies into images.
+fn is_docker_scaffold(root: &VirtualPath) -> bool {
+    root.join("dockerManifest.json").is_file()
+}
+
 #[plugin_fn]
 pub fn sync_workspace(Json(input): Json<SyncWorkspaceInput>) -> FnResult<Json<SyncOutput>> {
     let config = parse_extension_config::<TiltExtensionConfig>(input.extension_config)?;
     let root = &input.context.workspace_root;
     let mut output = SyncOutput::default();
 
-    if !config.sync {
+    // Inside an image (`moon run` syncs before the start task), the workspace
+    // is the pruned `moon docker scaffold` output: other projects' Dockerfiles
+    // are missing, so generation would fail, and nothing there reads it.
+    if !config.sync || is_docker_scaffold(root) {
         output.skipped = true;
 
         return Ok(Json(output));

@@ -646,6 +646,24 @@ mod tilt_extension {
         }
 
         #[tokio::test(flavor = "multi_thread")]
+        async fn skips_inside_a_docker_scaffold() {
+            let sandbox = create_moon_sandbox("query");
+            create_fake_moon(&sandbox);
+            sandbox.create_file(
+                "dockerManifest.json",
+                r#"{ "focusedProjects": ["web"], "unfocusedProjects": [] }"#,
+            );
+            let plugin = sandbox.create_extension("tilt").await;
+
+            let output = sync(&plugin, json!({ "moonBin": FAKE_MOON })).await;
+
+            assert!(output.skipped);
+            assert!(output.operations.is_empty());
+            assert!(!sandbox.path().join(".moon/tilt").exists());
+            assert!(!sandbox.path().join("Tiltfile").exists());
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
         async fn records_removed_k8s_settings_without_failing_the_pipeline() {
             let sandbox = create_moon_sandbox("query");
             create_fake_moon(&sandbox);
