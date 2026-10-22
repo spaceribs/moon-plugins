@@ -372,7 +372,7 @@ The output is regenerated during moon's **workspace sync**: on `moon sync`, and 
 
 - Files are only rewritten when their contents change, so a running `tilt up` reloads only when something actually changed.
 - Resources launched by Tilt run moon with `MOON_SKIP_SYNC_WORKSPACE=true`, so service restarts don't trigger syncs.
-- Inside an [image](#images), where `moon run` syncs before the start task, generation is skipped: the workspace there is `moon docker scaffold` output (it has a `dockerManifest.json` at the root), which holds only the project and its dependencies, and nothing in the image reads `.moon/tilt/`. To skip loading the extension there at all, set `MOON_SKIP_SYNC_WORKSPACE` in the image (see [Plugins inside the image build](#plugins-inside-the-image-build)).
+- Inside an [image](#images), where `moon run` syncs before the build and start tasks, generation is skipped: the workspace there is `moon docker scaffold` output (it has a `dockerManifest.json` at the root), which holds only the project and its dependencies, and nothing in the image reads `.moon/tilt/`.
 - Sync failures, such as `moon query` erroring or a missing `moonBin` path, are recorded on the sync operation, so they never block `moon run`. The exception is a bare `moonBin` name (the default `moon`) that isn't on `PATH`, which aborts the call. If moon isn't on your `PATH`, set `moonBin` to its path, or set `sync: false`.
 - In CI, moon warns about synced files "that should be committed". The extension only reports the main `Tiltfile` when it creates one, never the self-ignored output. So commit the main `Tiltfile`, and CI needs no `sync: false`.
 - `moon ext tilt -- generate --check` fails, naming the files, when any generated file is out of date, missing, or no longer produced.
@@ -461,14 +461,8 @@ moon runs inside the build (`moon docker scaffold`, `moon docker setup`), so it 
   ```
 
   (A [custom Dockerfile template](https://moonrepo.dev/docs/config/workspace#docker) with `COPY --from=skeleton /app/.moon/plugins ./.moon/plugins` after its configs `COPY` works too.)
-- **`moon run` syncs the workspace when the container starts**, so every cold start loads the extension's WASM (about 7 seconds on 1 CPU), although the extension skips generation there. A server whose liveness probe only allows for its own startup can be killed and restarted in a loop. Turn the sync off in the start stage, with `ENV MOON_SKIP_SYNC_WORKSPACE=true` after `FROM base AS start` in your committed `Dockerfile` or a [custom Dockerfile template](https://moonrepo.dev/docs/config/workspace#docker):
-
-  ```dockerfile
-  FROM base AS start
-  ENV MOON_SKIP_SYNC_WORKSPACE=true
-  ```
-
-  Every toolchain plugin in `.moon/toolchains.*` still loads, including the [`tilt` toolchain](../../toolchains/tilt/README.md) (about 4.5 seconds on 1 CPU) although no Tilt runs in the image. That's moon behaviour.
+- **Every cold `moon run` in an image loads the extension's WASM** (about 7 seconds on 1 CPU), on top of every toolchain plugin in `.moon/toolchains.*`, including the [`tilt` toolchain](../../toolchains/tilt/README.md) (about 4.5 seconds) although no Tilt runs there. moon registers extensions and toolchains at startup, before it decides whether to sync, so neither the extension nor `MOON_SKIP_SYNC_WORKSPACE` can avoid this. Allow for it in startup and liveness probes, for example with a Kubernetes `startupProbe`, or a server whose liveness probe only allows for its own startup can be killed and restarted in a loop.
+- **The sync itself is skipped in images**, in the build stage (the scaffold's configs, `dockerManifest.json` included, are copied in before `moon docker setup` and the build task) and the start stage. `ENV MOON_SKIP_SYNC_WORKSPACE=true` in the Dockerfile is optional, and only saves the rest of moon's sync work.
 
 ### Deploying your image
 
