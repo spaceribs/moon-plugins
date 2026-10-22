@@ -929,16 +929,43 @@ fn tilt_command(
     )
     .map_err(|error| anyhow!(error.message()))?;
 
+    // The toolchain's binary is found under the plugin's virtual `/proto`,
+    // which the host's shell doesn't know: run it by its real host path.
+    let command = host_path(executable.command)?;
     let mut input = if stream {
-        ExecCommandInput::new(&executable.command, args)
+        ExecCommandInput::new(&command, args)
     } else {
-        ExecCommandInput::pipe(&executable.command, args)
+        ExecCommandInput::pipe(&command, args)
     }
     .cwd(root.clone());
 
-    input.paths.extend(executable.path.map(Into::into));
+    if let Some(path) = executable.path {
+        input.paths.push(host_path(path)?.into());
+    }
 
     Ok(input)
+}
+
+/// `path` on the host: a path under proto's virtual `/proto` mount mapped
+/// into the real proto home (`PROTO_HOME`, else `~/.proto`). Anything else
+/// is returned unchanged.
+fn host_path(path: String) -> AnyResult<String> {
+    if !path.starts_with(toolchain::PROTO_MOUNT) {
+        return Ok(path);
+    }
+
+    let windows = get_host_environment()?.os.is_windows();
+    let proto_home = match get_host_env_var("PROTO_HOME")?.filter(|home| !home.is_empty()) {
+        Some(home) => home,
+        None => {
+            let home = get_host_env_var(if windows { "USERPROFILE" } else { "HOME" })?
+                .ok_or_else(|| anyhow!("Can't find proto's home directory: set PROTO_HOME"))?;
+
+            format!("{home}{}.proto", if windows { '\\' } else { '/' })
+        }
+    };
+
+    Ok(toolchain::to_host_path(&path, &proto_home, windows))
 }
 
 /// Whether `.moon/toolchains.*` declares a top-level `tilt` toolchain. The
