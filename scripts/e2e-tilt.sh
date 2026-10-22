@@ -74,9 +74,11 @@ builds() {
     node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log((JSON.parse(s).status.buildHistory||[]).length))'
 }
 
-# Wait for Tilt to start and the resources to be ready.
+# Wait for Tilt to start and load the Tiltfile, then for the resources to be
+# ready. `tilt wait` fails at once on a resource that doesn't exist yet, and
+# the session exists before the Tiltfile (which runs `generate`) has loaded.
 for _ in $(seq 1 60); do
-  "$tilt" get session > /dev/null 2>&1 && break
+  "$tilt" get uiresource web:codegen web:dev > /dev/null 2>&1 && break
   sleep 2
 done
 "$tilt" wait --for=condition=Ready uiresource/web:codegen uiresource/web:dev --timeout=300s ||
