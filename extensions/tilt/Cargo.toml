@@ -1,6 +1,6 @@
 [package]
 name = "tilt_extension"
-version = "0.4.0"
+version = "0.5.0"
 description = "moon extension WASM plugin that connects the moon task graph to Tilt (tilt.dev)."
 authors = ["spaceribs"]
 edition.workspace = true

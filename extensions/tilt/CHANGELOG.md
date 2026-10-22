@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.0](https://github.com/spaceribs/moon-plugins/compare/tilt_extension-v0.4.0...tilt_extension-v0.5.0) - 2026-10-22
+
+### Added
+
+- *(tilt)* [**breaking**] build images from each project's committed Dockerfile
+- *(tilt)* run a command after a Live Update sync
+- *(tilt)* [**breaking**] generate into .moon/tilt as small files, with per-section templates
+
+### Fixed
+
+- *(tilt)* warn when liveUpdate.run can't run, and keep {} at the default
+- *(tilt)* drop the reapply marker where args are parsed, and wait for its load
+- *(tilt)* re-apply the selection when up/focus leave the args unchanged
+
 ## [0.4.0](https://github.com/spaceribs/moon-plugins/compare/tilt_extension-v0.3.0...tilt_extension-v0.4.0) - 2026-10-21
 
 ### Added
