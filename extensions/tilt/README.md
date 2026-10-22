@@ -22,6 +22,8 @@ Pair it with the [Tilt toolchain](../../toolchains/tilt) to install and pin the 
   - [What triggers a re-run or restart](#what-triggers-a-re-run-or-restart)
   - [One Tilt instance, selected by project](#one-tilt-instance-selected-by-project)
   - [Workloads your Tiltfiles deploy](#workloads-your-tiltfiles-deploy)
+  - [Exec buttons](#exec-buttons)
+  - [Running a task where Tilt runs it](#running-a-task-where-tilt-runs-it)
   - [The generated Tiltfiles](#the-generated-tiltfiles)
 - [Containers (opt-in)](#containers-opt-in)
 - [Templates](#templates)
@@ -75,6 +77,7 @@ moon ext tilt -- up web api            # start Tilt with these projects, or add 
 moon ext tilt -- focus api             # run only these projects in the running Tilt (starts it if needed)
 moon ext tilt -- ci [projects...]      # `tilt ci` for these projects (or everything)
 moon ext tilt -- down                  # `tilt down`: tear down resources Tilt created
+moon ext tilt -- exec api:db-migrate   # run a task where Tilt runs its project (see below)
 ```
 
 Extra Tilt flags go after another `--`, e.g. `moon ext tilt -- up web -- --legacy`. With containers, `up`, `focus`, and `ci` also take `--edit`/`--edit-affected` ([see below](#building-only-some-images-from-source)).
@@ -224,6 +227,58 @@ The extension decorates each workload with `k8s_resource(...)` or `dc_resource(.
 - Declare each kind under its own key: `k8s_resource` and `dc_resource` only accept their own kind of resource.
 - **Load Compose files before the decorations.** For Kubernetes the order doesn't matter, but Tilt rejects `dc_resource` for a service no `docker_compose()` has loaded yet (`no Docker Compose service found with name "<name>"`). Project Tiltfiles are included before the decorations, so call `docker_compose()` there, or before `include("./.moon/tilt/Tiltfile")` in your main `Tiltfile`.
 
+### Exec buttons
+
+Tag a task `tilt-exec` and it gets a button in Tilt that runs it where its project runs: inside the project's first [declared workload](#workloads-your-tiltfiles-deploy), or on the host for projects without workloads. Tag it `tilt-confirm` too, for destructive tasks, and the button asks before running it:
+
+```yaml
+# apps/api/moon.yml
+project:
+  tilt:
+    workloads:
+      k8s: ["api"]
+    buttons:
+      db-migrate:
+        icon: "storage"
+        args: "Flags"      # a text input, passed to the task after --
+tasks:
+  db-migrate:
+    command: "python manage.py migrate"
+    description: "Apply database migrations"
+    tags: ["tilt-exec"]
+  db-reset:
+    command: "python manage.py flush"
+    tags: ["tilt-exec", "tilt-confirm"]
+```
+
+Both buttons appear on the `api` resource. `Apply database migrations` runs `moon run api:db-migrate -- <flags>` in a running pod of `api`. `db-reset` asks for confirmation first.
+
+- **Where:** a project's buttons go on its first declared workload (Kubernetes before Compose), else its first local resource, else Tilt's top navigation bar.
+- **How:** each button runs [`moon ext tilt -- exec <project>:<task>`](#running-a-task-where-tilt-runs-it), which asks the running Tilt where the workload is when you click. Renamed resources, Helm releases, and namespaces all work, and no shell is involved, so buttons work on Windows too.
+- **Label:** `buttons.<task>.text`, else the task's `description`, else its ID. `icon` is a [Material icon](https://fonts.google.com/icons) name.
+- **Confirmation lives on the task**, so `moon query tasks` shows which tasks are destructive. `exec` refuses a `tilt-confirm` task without `--yes`, so scripts and agents get the same safeguard as Tilt's UI.
+- **For one-off tasks.** Buttons run without a terminal, so a task that waits for input fails, and a persistent task runs until you stop it.
+
+`project.tilt.buttons` settings for a task that doesn't exist, or isn't tagged `tilt-exec`, fail generation. The tags can be renamed with `execTag` and `confirmTag`. Buttons need Tilt's [`uibutton`](https://github.com/tilt-dev/tilt-extensions/tree/master/uibutton) extension, which is fetched from GitHub when the Tiltfile loads.
+
+### Running a task where Tilt runs it
+
+`moon ext tilt -- exec <project>:<task>` runs `moon run <project>:<task>` where Tilt runs the project. It's what [exec buttons](#exec-buttons) call, and it works the same from a terminal, a script, or an agent:
+
+```sh
+moon ext tilt -- exec api:db-migrate                 # in a running pod of api's first workload
+moon ext tilt -- exec api:db-migrate -- --noinput    # args after -- go to the task
+moon ext tilt -- exec api:db-reset --yes             # required for tasks tagged tilt-confirm
+```
+
+- **Kubernetes workload:** it asks the running Tilt for the workload's pods and runs `kubectl exec` in a running one, using Tilt's kubeconfig and context, so it reaches the cluster Tilt deploys to. The pod's default container is used. Needs `kubectl` on PATH.
+- **Compose workload:** it asks Tilt for the service's container and runs `docker exec` in it. Needs `docker` (`dockerBin`).
+- **No workloads:** it runs `moon run` on the host, from the workspace root, whether or not Tilt is running.
+- **Args:** without args after `--`, it reads `MOON_TILT_ARGS`, which a button's input sets. The value is split into words the same way on every platform: quotes group, backslashes escape, and nothing is expanded.
+- **Errors:** it fails, naming the workload, when Tilt isn't running (on `TILT_PORT`) or the workload has no running pod or container. The task's exit code fails the command.
+
+The image needs `moon` on its PATH, which moon's Dockerfiles provide.
+
 ### The generated Tiltfiles
 
 The extension keeps Tiltfiles in sync with your workspace, so `tilt up` from the workspace root brings up everything:
@@ -244,6 +299,7 @@ The generated output is a directory of small files (`outputDir`, default `.moon/
 | `resources.tilt` | The `(moon)` resource and a `local_resource` per exposed moon task |
 | `images/<project>.tilt` | One per [image](#images) |
 | `workloads.tilt` | Decorations for [declared workloads](#workloads-your-tiltfiles-deploy), after project Tiltfiles so Compose services are loaded |
+| `buttons.tilt` | [Exec buttons](#exec-buttons), if any task has one |
 | `selection.tilt` | Selecting projects by ID, last |
 
 Files for empty sections (no images, no workloads) aren't written. Generated files that are no longer produced, such as a removed project's image file, are deleted. Only files carrying the generated header are touched, so anything else you put in the directory stays.
@@ -440,6 +496,7 @@ Like moon's `Dockerfile.tera`, the generated files are rendered with [Tera](http
 | `resources` | `resources.tilt` | `moon_resource`, `resources` |
 | `image` | `images/<project>.tilt` | `image` |
 | `workloads` | `workloads.tilt` | `workloads` |
+| `buttons` | `buttons.tilt` | `buttons` |
 | `selection` | `selection.tilt` | `selection` |
 
 Every section also has an empty `footer` block. To customize one, put a `<section>.tera` in a template directory. It replaces that section, and every other file stays built-in:
@@ -502,6 +559,7 @@ Every section gets the same variables. The `image` section also gets `image`, th
 | `images` | Images: `project`, `image_ref`, `dockerfile`, `command`, `watch`, `ignore`, `live_update` (`fall_back_on`, `syncs` with `local`/`remote`, `restart_entrypoint`, `restart_container`, `run` (a string or a list), or none). |
 | `image` | In the `image` section only: the image its file is for (as in `images`). |
 | `workloads` | Declared workloads: `name`, `kind` (`k8s` or `compose`), `project`, `labels` (empty with `workloadLabels: "none"`), `resource_deps`. |
+| `buttons` | [Exec buttons](#exec-buttons): `target`, `project`, `text`, `icon`, `resource` (none for the navigation bar), `confirm`, `args` (the input's label), `args_env` (the input's name), `command`. |
 | `excluded` | Tasks left out because they depend on a task that runs Tilt, and would otherwise have been resources: `target`, `dependency`. |
 | `sections` | In the `Tiltfile` section only: the generated section files it includes, in order. |
 | `config_files` | Files the generated output is derived from (watched by `(moon)`). |
@@ -526,6 +584,8 @@ In `.moon/extensions.yml`, next to `plugin`:
 | Setting | Default | Description |
 | --- | --- | --- |
 | `tag` | `"tilt"` | Tag that selects tasks, or projects whose persistent tasks are selected. |
+| `execTag` | `"tilt-exec"` | Tag that gives a task a Tilt button running it where its project runs. See [Exec buttons](#exec-buttons). |
+| `confirmTag` | `"tilt-confirm"` | Tag that marks a task destructive: its button asks for confirmation, and `exec` requires `--yes`. |
 | `includePersistent` | `false` | Expose every persistent task, regardless of tags. |
 | `linkProjectDependencies` | `true` | Link services to upstream services through moon's project graph. |
 | `includeUpstreamServices` | `true` | Expose upstream services even when they aren't tagged. |
@@ -557,6 +617,7 @@ In a project's `moon.yml`, under `project.tilt` (moon's custom project metadata)
 | `serviceRestart` | Overrides the workspace `serviceRestart` for this project (local services and Live Update restarts). |
 | `resources` | Extra Tilt resource names (e.g. from the project's own `Tiltfile`) that the project ID selects. |
 | `dependsOn` | Runtime-only dependencies on other projects: their services and workloads are linked and brought up like a moon dependency's, but images don't follow them. See [Service dependencies](#service-dependencies-from-the-project-graph). |
+| `buttons` | Settings for the [exec buttons](#exec-buttons) of tasks tagged `tilt-exec`, by task ID: `text`, `icon`, and `args` (the label of a text input passed to the task after `--`). |
 | `workloads` | Tilt resources the project's own Tiltfile deploys, by kind: `k8s` (YAML, kustomize, Helm, `helm_resource`) and `compose`. Containerizes the project. See [Workloads your Tiltfiles deploy](#workloads-your-tiltfiles-deploy). |
 | `image` | Build this project's image from its committed `Dockerfile` (written by `moon docker file <project>`) under this name (used verbatim, registry prefix included). Your own resources deploy it. |
 | `liveUpdate` | `false` rebuilds the image on every change instead of syncing. An object holds settings: `run` is a command (string or list) to run in the container after each sync, without a restart, and turns Live Update on. Any other value (such as `"false"`) fails generation. |

@@ -42,6 +42,15 @@ pub struct TiltExtensionConfig {
     /// Tagged projects contribute all of their persistent tasks.
     pub tag: String,
 
+    /// Tasks with this tag get a Tilt button that runs them where their
+    /// project runs (`moon ext tilt -- exec`): in its first declared workload,
+    /// or on the host.
+    pub exec_tag: String,
+
+    /// Tasks with this tag are destructive: their buttons ask for
+    /// confirmation, and `moon ext tilt -- exec` refuses them without `--yes`.
+    pub confirm_tag: String,
+
     /// Expose every persistent (`preset: server`) task as a resource,
     /// regardless of tags.
     pub include_persistent: bool,
@@ -106,7 +115,7 @@ pub struct TiltExtensionConfig {
 
     /// Workspace-relative directory of section templates. A `<section>.tera`
     /// there (`Tiltfile`, `lib`, `args`, `resources`, `image`, `workloads`,
-    /// `selection`) replaces that section's built-in template, and can
+    /// `buttons`, `selection`) replaces that section's built-in template, and can
     /// `{% extends "moon/sections/<section>.tera" %}` to override blocks.
     pub template_dir: Option<String>,
 
@@ -141,6 +150,8 @@ impl Default for TiltExtensionConfig {
     fn default() -> Self {
         Self {
             tag: "tilt".into(),
+            exec_tag: "tilt-exec".into(),
+            confirm_tag: "tilt-confirm".into(),
             include_persistent: false,
             link_project_dependencies: true,
             include_upstream_services: true,
@@ -174,6 +185,19 @@ mod tests {
 
     fn parse(json: &str) -> TiltExtensionConfig {
         serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn exec_and_confirm_tags_default_and_override() {
+        let config = parse("{}");
+
+        assert_eq!(config.exec_tag, "tilt-exec");
+        assert_eq!(config.confirm_tag, "tilt-confirm");
+
+        let config = parse(r#"{ "execTag": "button", "confirmTag": "destructive" }"#);
+
+        assert_eq!(config.exec_tag, "button");
+        assert_eq!(config.confirm_tag, "destructive");
     }
 
     #[test]

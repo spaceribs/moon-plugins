@@ -1,0 +1,18 @@
+{
+  "metadata": {
+    "name": "api"
+  },
+  "spec": {
+    "cluster": "default"
+  },
+  "status": {
+    "pods": [
+      {
+        "name": "probe-api-6df776c848-j7t4r",
+        "namespace": "moon-tilt-exec-probe",
+        "phase": "Running",
+        "deleting": false
+      }
+    ]
+  }
+}

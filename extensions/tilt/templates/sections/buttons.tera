@@ -1,0 +1,36 @@
+{#- Buttons for moon tasks tagged `execTag`. Each runs its task where its
+    project runs (`moon ext tilt -- exec`): in its first declared workload, or
+    on the host. Tasks tagged `confirmTag` ask for confirmation first. -#}
+{%- block buttons -%}
+{%- if buttons %}
+load("ext://uibutton", "cmd_button", "location", "text_input")
+
+# moon tasks run where their project runs: in its first declared workload,
+# or on the host.
+{%- for button in buttons %}
+
+cmd_button(
+    {{ button.target | starlark }},
+    argv = {{ button.command | starlark }},
+    text = {{ button.text | starlark }},
+{%- if button.resource %}
+    resource = {{ button.resource | starlark }},
+{%- else %}
+    location = location.NAV,
+{%- endif %}
+{%- if button.icon %}
+    icon_name = {{ button.icon | starlark }},
+{%- endif %}
+    dir = _MOON_ROOT,
+    env = ["%s=%s" % (key, value) for key, value in _MOON_ENV.items()],
+{%- if button.args %}
+    inputs = [text_input({{ button.args_env | starlark }}, label = {{ button.args | starlark }})],
+{%- endif %}
+{%- if button.confirm %}
+    requires_confirmation = True,
+{%- endif %}
+)
+{%- endfor %}
+{%- endif %}
+{%- endblock buttons %}
+{%- block footer %}{% endblock footer %}

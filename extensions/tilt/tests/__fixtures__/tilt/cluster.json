@@ -1,0 +1,14 @@
+{
+  "metadata": {
+    "name": "default"
+  },
+  "status": {
+    "connection": {
+      "kubernetes": {
+        "context": "kind-kind",
+        "configPath": "/tmp/tilt-dev/cluster/default.yml",
+        "namespace": ""
+      }
+    }
+  }
+}
