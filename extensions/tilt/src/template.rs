@@ -15,7 +15,7 @@ const MACROS_TEMPLATE: &str = include_str!("../templates/macros.tera");
 
 /// Sections, in the order the entry file includes them (after `lib` and
 /// `args`, which are loaded instead), with their built-in templates.
-pub const SECTIONS: [(&str, &str); 7] = [
+pub const SECTIONS: [(&str, &str); 8] = [
     (
         "Tiltfile",
         include_str!("../templates/sections/Tiltfile.tera"),
@@ -30,6 +30,10 @@ pub const SECTIONS: [(&str, &str); 7] = [
     (
         "workloads",
         include_str!("../templates/sections/workloads.tera"),
+    ),
+    (
+        "buttons",
+        include_str!("../templates/sections/buttons.tera"),
     ),
     (
         "selection",
@@ -77,6 +81,9 @@ pub struct TemplateContext<'a> {
     /// Tasks left out because they depend on a task that runs Tilt, and would
     /// otherwise have been resources: `target`, `dependency`.
     pub excluded: &'a [crate::tiltfile::ExcludedTask],
+    /// Buttons for tasks tagged `execTag`, each running its task where its
+    /// project runs (`moon ext tilt -- exec`).
+    pub buttons: &'a [crate::buttons::Button],
     /// Generated section files the entry file includes, relative to it.
     pub sections: Vec<String>,
 }

@@ -1,4 +1,6 @@
+pub mod buttons;
 pub mod config;
+pub mod exec;
 pub mod export;
 pub mod images;
 pub mod query;

@@ -2,7 +2,8 @@ use moon_pdk_test_utils::*;
 use serde_json::json;
 
 /// A fake `moon` that replays captured `moon query` output (`<command>.json`
-/// next to it), as the extension's `moonBin`.
+/// next to it), as the extension's `moonBin`. `moon run` records its
+/// arguments in `ran.txt`, and fails for targets ending in `:fail`.
 #[cfg(unix)]
 const FAKE_MOON: &str = "/workspace/fake-moon";
 #[cfg(windows)]
@@ -15,7 +16,13 @@ fn create_fake_moon(sandbox: &MoonWasmSandbox) {
 
         sandbox.create_file(
             "fake-moon",
-            "#!/bin/sh\ncat \"$(dirname \"$0\")/$2.json\"\n",
+            "#!/bin/sh\n\
+             if [ \"$1\" = run ]; then\n\
+             \x20 echo \"$@\" > \"$(dirname \"$0\")/ran.txt\"\n\
+             \x20 case \"$2\" in *:fail) exit 3 ;; esac\n\
+             \x20 exit 0\n\
+             fi\n\
+             cat \"$(dirname \"$0\")/$2.json\"\n",
         );
 
         let path = sandbox.path().join("fake-moon");
@@ -23,7 +30,15 @@ fn create_fake_moon(sandbox: &MoonWasmSandbox) {
     }
 
     #[cfg(windows)]
-    sandbox.create_file("fake-moon.cmd", "@type \"%~dp0%2.json\"\r\n");
+    sandbox.create_file(
+        "fake-moon.cmd",
+        "@if \"%1\"==\"run\" (\r\n\
+         \x20 echo %*> \"%~dp0ran.txt\"\r\n\
+         \x20 if \"%2\"==\"api:fail\" exit /b 3\r\n\
+         \x20 exit /b 0\r\n\
+         )\r\n\
+         @type \"%~dp0%2.json\"\r\n",
+    );
 }
 
 /// A generated file in the default output directory.
@@ -282,6 +297,19 @@ mod tilt_extension {
         }
 
         #[tokio::test(flavor = "multi_thread")]
+        #[should_panic(expected = "buttons of web configures lint, which isn't tagged tilt-exec")]
+        async fn fails_for_buttons_on_untagged_tasks() {
+            let sandbox = create_moon_sandbox("query");
+            set_web_tilt(
+                &sandbox,
+                json!({ "buttons": { "lint": { "icon": "check" } } }),
+            );
+            let plugin = create_plugin(&sandbox).await;
+
+            plugin.execute_extension(generate_args(&[])).await;
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
         async fn builds_images_from_the_committed_dockerfile() {
             let sandbox = create_moon_sandbox("query");
             set_web_tilt(&sandbox, json!({ "image": "web" }));
@@ -446,6 +474,90 @@ mod tilt_extension {
                 std::fs::read_to_string(sandbox.path().join("api/k8s.yaml")).unwrap(),
                 "# mine\n"
             );
+        }
+    }
+
+    mod exec {
+        use super::*;
+
+        /// A sandbox whose `api` has tasks `fail` (the fake moon fails it) and
+        /// `reset` (tagged `tilt-confirm`).
+        async fn create_plugin(sandbox: &MoonWasmSandbox) -> ExtensionTestWrapper {
+            create_fake_moon(sandbox);
+
+            let path = sandbox.path().join("tasks.json");
+            let mut tasks: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+
+            tasks["tasks"]["api"]["fail"] =
+                json!({ "id": "fail", "target": "api:fail", "command": "false" });
+            tasks["tasks"]["api"]["reset"] = json!({ "id": "reset", "target": "api:reset", "command": "reset", "tags": ["tilt-confirm"] });
+            std::fs::write(path, tasks.to_string()).unwrap();
+
+            sandbox
+                .create_extension_with_config("tilt", |config| {
+                    config.insert("moon_extension_config", json!({ "moonBin": FAKE_MOON }));
+                })
+                .await
+        }
+
+        fn exec_args(args: &[&str]) -> ExecuteExtensionInput {
+            let mut all = vec!["exec".to_owned()];
+            all.extend(args.iter().map(|arg| arg.to_string()));
+
+            ExecuteExtensionInput {
+                args: all,
+                ..Default::default()
+            }
+        }
+
+        fn ran(sandbox: &MoonWasmSandbox) -> String {
+            std::fs::read_to_string(sandbox.path().join("ran.txt"))
+                .unwrap()
+                .trim()
+                .to_owned()
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn runs_host_tasks_with_moon() {
+            let sandbox = create_moon_sandbox("query");
+            let plugin = create_plugin(&sandbox).await;
+
+            plugin
+                .execute_extension(exec_args(&["web:lint", "--", "--fix", "src"]))
+                .await;
+
+            assert_eq!(ran(&sandbox), "run web:lint -- --fix src");
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        #[should_panic(expected = "api:fail exited with code 3")]
+        async fn fails_when_the_task_fails() {
+            let sandbox = create_moon_sandbox("query");
+            let plugin = create_plugin(&sandbox).await;
+
+            plugin.execute_extension(exec_args(&["api:fail"])).await;
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        #[should_panic(expected = "pass --yes to run it")]
+        async fn refuses_confirmed_tasks_without_yes() {
+            let sandbox = create_moon_sandbox("query");
+            let plugin = create_plugin(&sandbox).await;
+
+            plugin.execute_extension(exec_args(&["api:reset"])).await;
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn runs_confirmed_tasks_with_yes() {
+            let sandbox = create_moon_sandbox("query");
+            let plugin = create_plugin(&sandbox).await;
+
+            plugin
+                .execute_extension(exec_args(&["api:reset", "--yes"]))
+                .await;
+
+            assert_eq!(ran(&sandbox), "run api:reset");
         }
     }
 

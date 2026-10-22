@@ -64,6 +64,7 @@ pub struct Planned {
     pub images: Vec<crate::images::Image>,
     pub workloads: Vec<DecoratedWorkload>,
     pub excluded: Vec<ExcludedTask>,
+    pub buttons: Vec<crate::buttons::Button>,
 }
 
 /// Plan local resources, container images, and workload decorations together.
@@ -101,12 +102,14 @@ pub fn plan_with_images(
     let plan = plan(projects, tasks, config, &containerized);
 
     let workloads = decorate_workloads(projects, &plan.workload_deps, config.workload_labels);
+    let buttons = crate::buttons::plan_buttons(projects, tasks, &plan.resources, config);
 
     Planned {
         resources: plan.resources,
         images,
         workloads,
         excluded: plan.excluded,
+        buttons,
     }
 }
 
@@ -774,6 +777,8 @@ pub struct RenderInput<'a> {
     pub workloads: &'a [DecoratedWorkload],
     /// Tasks left out because they follow a task that runs Tilt.
     pub excluded: &'a [ExcludedTask],
+    /// Buttons for tasks tagged `execTag`.
+    pub buttons: &'a [crate::buttons::Button],
     pub version: &'a str,
     /// Section templates from `templateDir`, by section name.
     pub section_templates: Option<&'a BTreeMap<String, String>>,
@@ -795,6 +800,7 @@ impl<'a> RenderInput<'a> {
             images: &[],
             workloads: &[],
             excluded: &[],
+            buttons: &[],
             version,
             section_templates: None,
         }
@@ -1015,6 +1021,7 @@ pub fn render(input: &RenderInput, config: &TiltExtensionConfig) -> Result<Gener
         images: input.images,
         workloads: input.workloads,
         excluded: input.excluded,
+        buttons: input.buttons,
         sections: vec![],
     })?;
     let renderer = template::Renderer::new(input.section_templates.unwrap_or(&BTreeMap::new()))?;
@@ -1081,6 +1088,11 @@ pub fn render(input: &RenderInput, config: &TiltExtensionConfig) -> Result<Gener
         "workloads.tilt",
         &[],
         renderer.render("workloads", &context, None)?,
+    );
+    section(
+        "buttons.tilt",
+        &[lib("./")],
+        renderer.render("buttons", &context, None)?,
     );
     section(
         "selection.tilt",
@@ -1152,8 +1164,9 @@ mod tests {
             "resources.tilt" => 3,
             path if path.starts_with("images/") => 4,
             "workloads.tilt" => 5,
-            "selection.tilt" => 6,
-            _ => 7,
+            "buttons.tilt" => 6,
+            "selection.tilt" => 7,
+            _ => 8,
         };
         let mut paths: Vec<&String> = files.keys().collect();
         paths.sort_by_key(|path| (order(path), path.to_owned()));
@@ -1895,6 +1908,135 @@ mod tests {
         assert!(files["lib.star"].contains("os.path.dirname(__file__), \"../..\"))"));
         assert!(files["lib.star"].ends_with("MOON_GITIGNORE = _MOON_GITIGNORE\n"));
         assert!(files["args.star"].ends_with("MOON_CFG = _moon_cfg\nmoon_edit = _moon_edit\n"));
+    }
+
+    /// Two buttons: one on a resource (confirmed, with an icon and an args
+    /// input), one in the navigation bar.
+    fn sample_buttons() -> Vec<crate::buttons::Button> {
+        let command = |target: &str, yes: bool| {
+            let mut command: Vec<String> = ["moon", "ext", "tilt", "--", "exec", target]
+                .map(String::from)
+                .into();
+
+            if yes {
+                command.push("--yes".into());
+            }
+            command
+        };
+
+        vec![
+            crate::buttons::Button {
+                target: "api:db-reset".into(),
+                project: "api".into(),
+                text: "Reset the database".into(),
+                icon: Some("delete".into()),
+                resource: Some("api".into()),
+                confirm: true,
+                args: Some("Flags".into()),
+                args_env: crate::buttons::ARGS_ENV,
+                command: command("api:db-reset", true),
+            },
+            crate::buttons::Button {
+                target: "tooling:check".into(),
+                project: "tooling".into(),
+                text: "check".into(),
+                icon: None,
+                resource: None,
+                confirm: false,
+                args: None,
+                args_env: crate::buttons::ARGS_ENV,
+                command: command("tooling:check", false),
+            },
+        ]
+    }
+
+    #[test]
+    fn renders_buttons() {
+        let (projects, tasks) = fixture();
+        let config = TiltExtensionConfig::default();
+        let resources = plan_resources(&projects, &tasks, &config);
+        let buttons = sample_buttons();
+        let files = super::render(
+            &RenderInput {
+                buttons: &buttons,
+                ..RenderInput::new(&resources, &projects, "0.0.0")
+            },
+            &config,
+        )
+        .unwrap();
+        let file = &files["buttons.tilt"];
+
+        assert!(file.contains("load(\"./lib.star\", _MOON_ROOT = \"MOON_ROOT\""));
+        assert!(
+            file.contains(
+                "load(\"ext://uibutton\", \"cmd_button\", \"location\", \"text_input\")\n"
+            )
+        );
+        assert!(file.contains(
+            "cmd_button(\n    \"api:db-reset\",\n    argv = [\"moon\", \"ext\", \"tilt\", \"--\", \"exec\", \"api:db-reset\", \"--yes\"],\n    text = \"Reset the database\",\n    resource = \"api\",\n    icon_name = \"delete\",\n    dir = _MOON_ROOT,\n    env = [\"%s=%s\" % (key, value) for key, value in _MOON_ENV.items()],\n    inputs = [text_input(\"MOON_TILT_ARGS\", label = \"Flags\")],\n    requires_confirmation = True,\n)\n"
+        ));
+        assert!(file.contains(
+            "cmd_button(\n    \"tooling:check\",\n    argv = [\"moon\", \"ext\", \"tilt\", \"--\", \"exec\", \"tooling:check\"],\n    text = \"check\",\n    location = location.NAV,\n    dir = _MOON_ROOT,\n    env = [\"%s=%s\" % (key, value) for key, value in _MOON_ENV.items()],\n)\n"
+        ));
+        // After the workload decorations it attaches to, before selection.
+        assert!(
+            files["Tiltfile"]
+                .contains("include(\"./buttons.tilt\")\ninclude(\"./selection.tilt\")\n")
+        );
+    }
+
+    #[test]
+    fn no_buttons_file_without_buttons() {
+        let (projects, tasks) = fixture();
+        let config = TiltExtensionConfig::default();
+        let resources = plan_resources(&projects, &tasks, &config);
+        let files =
+            super::render(&RenderInput::new(&resources, &projects, "0.0.0"), &config).unwrap();
+
+        assert!(!files.contains_key("buttons.tilt"));
+        assert!(!files.values().any(|file| file.contains("ext://uibutton")));
+    }
+
+    #[test]
+    fn buttons_section_can_be_overridden() {
+        let (projects, tasks) = fixture();
+        let config = TiltExtensionConfig::default();
+        let resources = plan_resources(&projects, &tasks, &config);
+        let buttons = sample_buttons();
+        let overrides = BTreeMap::from([(
+            "buttons".to_owned(),
+            r#"{% extends "moon/sections/buttons.tera" %}
+{% block footer %}
+# custom buttons
+{% endblock footer %}"#
+                .to_owned(),
+        )]);
+        let render_with = |overrides: &BTreeMap<String, String>| {
+            super::render(
+                &RenderInput {
+                    buttons: &buttons,
+                    section_templates: Some(overrides),
+                    ..RenderInput::new(&resources, &projects, "0.0.0")
+                },
+                &config,
+            )
+            .unwrap()
+        };
+        let built_in = render_with(&BTreeMap::new());
+        let overridden = render_with(&overrides);
+
+        assert_eq!(
+            overridden["buttons.tilt"],
+            built_in["buttons.tilt"].trim_end().to_owned()
+                + "
+# custom buttons
+"
+        );
+        for (path, contents) in &built_in {
+            if path != "buttons.tilt" {
+                assert_eq!(&overridden[path], contents, "{path}");
+            }
+        }
     }
 
     #[test]

@@ -88,6 +88,8 @@ pub struct QueryTask {
     pub output_globs: BTreeMap<String, serde_json::Value>,
     pub options: QueryTaskOptions,
     pub tags: Vec<String>,
+    /// The task's `description`, if set.
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]

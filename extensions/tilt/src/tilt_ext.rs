@@ -1,4 +1,6 @@
+use crate::buttons;
 use crate::config::TiltExtensionConfig;
+use crate::exec::{self as task_exec, Location};
 use crate::export;
 use crate::images::{self, TiltArgs};
 use crate::query::{QueryProjectsOutput, QueryTasksOutput};
@@ -101,6 +103,22 @@ pub enum TiltCommand {
         /// `<project>/k8s.yaml`.
         #[arg(long)]
         output: Option<String>,
+    },
+    /// Run a moon task where Tilt runs its project: in its first declared
+    /// workload (a running pod, or the Compose container), or on the host.
+    /// What exec buttons run.
+    Exec {
+        /// The task's target, `<project>:<task>`.
+        target: String,
+
+        /// Run a task tagged `confirmTag` (destructive).
+        #[arg(long)]
+        yes: bool,
+
+        /// Arguments for the task, after `--`. Without them, the value of
+        /// `MOON_TILT_ARGS` (a button's input) is split into arguments.
+        #[arg(last = true)]
+        args: Vec<String>,
     },
     /// Tear down resources created by Tilt (`tilt down`). The instance
     /// itself stops with Ctrl-C in the terminal running `up`.
@@ -248,6 +266,9 @@ pub fn execute_extension(Json(input): Json<ExecuteExtensionInput>) -> FnResult<(
 
             start_tilt(root, &config, "ci", &args, tilt_args)?;
         }
+        TiltCommand::Exec { target, yes, args } => {
+            exec_task(root, &config, &target, yes, args)?;
+        }
         TiltCommand::Down { tilt_args } => {
             run_tilt(root, &config, "down", tilt_args)?;
         }
@@ -257,6 +278,120 @@ pub fn execute_extension(Json(input): Json<ExecuteExtensionInput>) -> FnResult<(
     };
 
     Ok(())
+}
+
+/// `moon ext tilt -- exec`: run `target` where Tilt runs its project,
+/// streaming its output.
+fn exec_task(
+    root: &VirtualPath,
+    config: &TiltExtensionConfig,
+    target: &str,
+    yes: bool,
+    args: Vec<String>,
+) -> AnyResult<()> {
+    let projects: QueryProjectsOutput = query_moon(root, config, "projects")?;
+    let tasks: QueryTasksOutput = query_moon(root, config, "tasks")?;
+    let resolved = task_exec::resolve(&projects, &tasks, config, target, yes)
+        .map_err(|error| anyhow!(error))?;
+    let args = if args.is_empty() {
+        match get_host_env_var(buttons::ARGS_ENV)? {
+            Some(value) => task_exec::split_args(&value).map_err(|error| {
+                anyhow!(
+                    "Invalid <property>{}</property> (<shell>{value}</shell>): {error}",
+                    buttons::ARGS_ENV
+                )
+            })?,
+            None => vec![],
+        }
+    } else {
+        args
+    };
+    let (command, command_args) = match &resolved.location {
+        Location::Host => (
+            config.moon_bin.clone(),
+            task_exec::moon_run_args(&resolved.target, &args),
+        ),
+        Location::Kubernetes(workload) => {
+            let discovery = tilt_get(root, config, "kubernetesdiscovery", workload)?;
+            let cluster = discovery["spec"]["cluster"]
+                .as_str()
+                .and_then(|cluster| tilt_get(root, config, "cluster", cluster).ok())
+                .unwrap_or_default();
+
+            require_command(
+                "kubectl",
+                "<property>project.tilt.workloads</property> on Kubernetes",
+            )?;
+
+            (
+                "kubectl".to_owned(),
+                task_exec::kubectl_args(&discovery, &cluster, workload, &resolved.target, &args)
+                    .map_err(|error| anyhow!(error))?,
+            )
+        }
+        Location::Compose(workload) => {
+            let service = tilt_get(root, config, "dockercomposeservice", workload)?;
+
+            require_command(
+                &config.docker_bin,
+                "<property>project.tilt.workloads</property> on Compose",
+            )?;
+
+            (
+                config.docker_bin.clone(),
+                task_exec::docker_args(&service, workload, &resolved.target, &args)
+                    .map_err(|error| anyhow!(error))?,
+            )
+        }
+    };
+
+    let output = exec(ExecCommandInput::new(&command, command_args).cwd(root.clone()))?;
+
+    if output.exit_code != 0 {
+        return Err(anyhow!(
+            "<id>{}</id> exited with code {}",
+            resolved.target,
+            output.exit_code
+        ));
+    }
+
+    Ok(())
+}
+
+/// A Tilt API object from the running instance (`tilt get <kind> <name>`).
+fn tilt_get(
+    root: &VirtualPath,
+    config: &TiltExtensionConfig,
+    kind: &str,
+    name: &str,
+) -> AnyResult<serde_json::Value> {
+    let output = exec(tilt_command(
+        root,
+        config,
+        ["get", kind, name, "-o", "json"].map(String::from).into(),
+        false,
+    )?)?;
+
+    if output.exit_code != 0 {
+        return Err(anyhow!(
+            "Tilt isn't running, or doesn't run <id>{name}</id> (<shell>tilt get {kind} {name}</shell>: {})",
+            output.get_output().trim()
+        ));
+    }
+
+    Ok(serde_json::from_str(&output.stdout)?)
+}
+
+/// Fail before running `command` when it isn't on PATH: the host traps
+/// (uncatchably) on missing commands.
+fn require_command(command: &str, needed_for: &str) -> AnyResult<()> {
+    if command_exists(get_host_environment()?, command) {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "<shell>{command}</shell> isn't on PATH, and is needed to run tasks in {needed_for}"
+        ))
+    }
 }
 
 fn query_moon<T: DeserializeOwned>(
@@ -328,6 +463,10 @@ fn render_generated(root: &VirtualPath, config: &TiltExtensionConfig) -> AnyResu
         return Err(anyhow!(error));
     }
     let tasks: QueryTasksOutput = query_moon(root, config, "tasks")?;
+
+    if let Some(error) = buttons::button_settings_errors(&projects, &tasks, config) {
+        return Err(anyhow!(error));
+    }
     let project_tiltfiles =
         tiltfile::find_project_tiltfiles(&projects, config, |path| root.join(path).is_file());
     let gitignore = load_gitignore(root, &projects);
@@ -350,6 +489,7 @@ fn render_generated(root: &VirtualPath, config: &TiltExtensionConfig) -> AnyResu
             images: &planned.images,
             workloads: &planned.workloads,
             excluded: &planned.excluded,
+            buttons: &planned.buttons,
             section_templates: Some(&section_templates),
             ..tiltfile::RenderInput::new(&planned.resources, &projects, env!("CARGO_PKG_VERSION"))
         },

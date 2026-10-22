@@ -1,0 +1,19 @@
+{
+  "metadata": {
+    "name": "cache"
+  },
+  "spec": {
+    "service": "cache",
+    "project": {
+      "name": "tilt-exec-probe"
+    }
+  },
+  "status": {
+    "containerName": "tilt-exec-probe-cache-1",
+    "containerID": "15f73831d4ad92cc069b587b6fcba6a02bbe0883a10efd1a2c824bed15b917c1",
+    "containerState": {
+      "running": true,
+      "status": "running"
+    }
+  }
+}
