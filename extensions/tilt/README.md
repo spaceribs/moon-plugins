@@ -38,13 +38,24 @@ Pair it with the [Tilt toolchain](../../toolchains/tilt) to install and pin the 
 
 ## Quick start
 
-1. Add the extension:
+In an existing moon workspace:
+
+1. Add the extension, and the [Tilt toolchain](../../toolchains/tilt) to install Tilt. Skip the toolchain if Tilt is already on your `PATH`.
 
    ```yaml
    # .moon/extensions.yml
    tilt:
      plugin: "github://spaceribs/moon-plugins/tilt_extension"
    ```
+
+   ```yaml
+   # .moon/toolchains.yml
+   tilt:
+     plugin: "github://spaceribs/moon-plugins/tilt_toolchain"
+     version: "0.37.8"
+   ```
+
+   Then install Tilt with `moon setup`.
 
 2. Mark what Tilt should run. Tag a project to expose all of its persistent (`preset: server`) tasks, or tag individual tasks:
 
@@ -53,10 +64,11 @@ Pair it with the [Tilt toolchain](../../toolchains/tilt) to install and pin the 
    tags: ["tilt"]
    tasks:
      dev:
-       command: "vite dev"
+       command: "vite dev"   # your dev server
        preset: "server"
-       deps: ["codegen"]
    ```
+
+   The task's `deps` come along as Tilt resources, and run before it.
 
 3. Start Tilt:
 
@@ -65,7 +77,7 @@ Pair it with the [Tilt toolchain](../../toolchains/tilt) to install and pin the 
    moon ext tilt -- up web      # just web, and everything it needs
    ```
 
-   This generates the Tiltfiles into `.moon/tilt/`, creates a `Tiltfile` that includes them (if you don't have one), and runs `tilt up`. Open the Tilt UI at <http://localhost:10350>. Resources are grouped by project.
+   This generates the Tiltfiles into `.moon/tilt/`, creates a `Tiltfile` that includes them if you don't have one, and runs `tilt up`. Open the Tilt UI at <http://localhost:10350>, where resources are grouped by project. Commit the created `Tiltfile`. The `.moon/tilt/` directory ignores itself.
 
 ## Usage
 
