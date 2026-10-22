@@ -327,6 +327,13 @@ fn render_generated(root: &VirtualPath, config: &TiltExtensionConfig) -> AnyResu
     let gitignore = load_gitignore(root, &projects);
     let config_files = find_config_files(root, &projects, config);
     let planned = tiltfile::plan_with_images(&projects, &tasks, config, &config_files);
+
+    for (project, reason) in images::unused_run_commands(&projects, &planned.images) {
+        host_log!(
+            stderr,
+            "<caution><property>project.tilt.liveUpdate.run</property> of <id>{project}</id> won't run:</caution> {reason}"
+        );
+    }
     let extension_id = get_plugin_id()?;
     let files = tiltfile::render(
         &tiltfile::RenderInput {

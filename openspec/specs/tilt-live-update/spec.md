@@ -35,7 +35,7 @@ When the project's `serviceRestart` is `inputs` and it has a `docker.file.startT
 - **THEN** the file is synced and the `api` container restarts, re-running `moon run api:serve`, without an image rebuild
 
 ### Requirement: Run a command after syncing
-A project SHALL be able to set `project.tilt.liveUpdate.run` to a command (a shell string, or a list of strings run directly), run in the container after each sync as a Live Update `run()` step. It SHALL run before any restart, so it combines with `serviceRestart: inputs`, and SHALL NOT restart the process by itself. Settings under `project.tilt.liveUpdate` SHALL enable Live Update for the project, whatever the workspace `liveUpdate` says.
+A project SHALL be able to set `project.tilt.liveUpdate.run` to a command (a shell string, or a list of strings run directly), run in the container after each sync as a Live Update `run()` step. It SHALL run before any restart, so it combines with `serviceRestart: inputs`, and SHALL NOT restart the process by itself. A `run` command SHALL enable Live Update for the project, whatever the workspace `liveUpdate` says; settings without one SHALL leave the workspace default.
 
 #### Scenario: Codegen without a restart
 - **WHEN** `tests` sets `project.tilt.liveUpdate.run: ["moon", "run", "tests:codegen"]` and its source is synced
@@ -44,6 +44,13 @@ A project SHALL be able to set `project.tilt.liveUpdate.run` to a command (a she
 #### Scenario: Run and restart
 - **WHEN** `api` sets `liveUpdate.run` and `serviceRestart: "inputs"`
 - **THEN** after a sync the command runs, then the app restarts
+
+### Requirement: Unused run commands are reported
+When a project sets `liveUpdate.run` but its image has no Live Update (it has no image, images are off, or there is nothing to sync), generation SHALL warn, naming the project and the reason, instead of dropping the command silently.
+
+#### Scenario: Run without an image
+- **WHEN** `web` sets `liveUpdate.run` but not `project.tilt.image`
+- **THEN** generation warns that `web`'s command won't run because it has no image
 
 ### Requirement: Malformed Live Update settings are rejected
 A `project.tilt.liveUpdate` that isn't a boolean or an object, has an unknown setting, or has an empty or non-string `run` SHALL fail generation with an error naming the project.

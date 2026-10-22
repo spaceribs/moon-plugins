@@ -12,7 +12,7 @@ use crate::config::TiltExtensionConfig;
 use crate::query::{QueryProjectsOutput, QueryTasksOutput};
 use crate::tiltfile::path_to_root;
 use crate::watch::{expand_braces, glob_base};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Where generated Dockerfiles are written (gitignored moon cache).
@@ -60,14 +60,22 @@ pub struct LiveUpdate {
 
 /// A command for Live Update's `run()` step: a shell string, or an argv list
 /// that runs without a shell.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum RunCommand {
     Shell(String),
     Exec(Vec<String>),
 }
 
-/// A project's `project.tilt.liveUpdate`: a bool, or settings that enable it.
+/// The settings object form of `project.tilt.liveUpdate`. `run` stays raw so
+/// a malformed command gets its own message.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LiveUpdateSettings {
+    run: Option<serde_json::Value>,
+}
+
+/// A project's `project.tilt.liveUpdate`: a bool, or settings.
 #[derive(Debug, PartialEq)]
 struct LiveUpdateSetting {
     enabled: Option<bool>,
@@ -75,60 +83,81 @@ struct LiveUpdateSetting {
 }
 
 fn parse_live_update(value: &serde_json::Value) -> Result<LiveUpdateSetting, String> {
-    use serde_json::Value;
-
     let invalid = |reason: &str| format!("<property>project.tilt.liveUpdate</property> {reason}");
 
-    match value {
-        Value::Bool(enabled) => Ok(LiveUpdateSetting {
-            enabled: Some(*enabled),
+    if let Some(enabled) = value.as_bool() {
+        return Ok(LiveUpdateSetting {
+            enabled: Some(enabled),
             run: None,
-        }),
-        Value::Object(settings) => {
-            if let Some(key) = settings.keys().find(|key| key.as_str() != "run") {
-                return Err(invalid(&format!(
-                    "has an unknown setting <property>{key}</property>"
-                )));
-            }
+        });
+    }
 
-            let run = match settings.get("run") {
-                None => None,
-                Some(Value::String(command)) if !command.trim().is_empty() => {
-                    Some(RunCommand::Shell(command.clone()))
-                }
-                Some(Value::Array(argv))
-                    if !argv.is_empty() && argv.iter().all(|arg| arg.as_str().is_some()) =>
-                {
-                    let argv: Vec<String> = argv
-                        .iter()
-                        .filter_map(|arg| arg.as_str().map(str::to_owned))
-                        .collect();
+    if !value.is_object() {
+        return Err(invalid(
+            "must be a boolean or an object with <property>run</property>",
+        ));
+    }
 
-                    if argv[0].trim().is_empty() {
-                        return Err(invalid(
-                            "<property>run</property> must start with a command",
-                        ));
-                    }
+    let settings: LiveUpdateSettings = serde_json::from_value(value.clone())
+        .map_err(|error| invalid(&format!("is invalid: {error}")))?;
 
-                    Some(RunCommand::Exec(argv))
+    let run = match settings.run.map(serde_json::from_value::<RunCommand>) {
+        None => None,
+        Some(Ok(RunCommand::Shell(command))) if command.trim().is_empty() => {
+            return Err(invalid("<property>run</property> is an empty command"));
+        }
+        Some(Ok(RunCommand::Exec(argv)))
+            if argv.first().is_none_or(|command| command.trim().is_empty()) =>
+        {
+            return Err(invalid(
+                "<property>run</property> must start with a command",
+            ));
+        }
+        Some(Ok(command)) => Some(command),
+        Some(Err(_)) => {
+            return Err(invalid(
+                "<property>run</property> must be a command string or a list of strings",
+            ));
+        }
+    };
+
+    // A command turns it on, even when the workspace turns it off. Settings
+    // without one leave the workspace default.
+    Ok(LiveUpdateSetting {
+        enabled: run.is_some().then_some(true),
+        run,
+    })
+}
+
+/// The `liveUpdate.run` a project configures, if its settings are valid.
+fn configured_run(project: &crate::query::QueryProject) -> Option<RunCommand> {
+    let value = project.config.tilt_metadata()?.get("liveUpdate")?;
+
+    parse_live_update(value).ok()?.run
+}
+
+/// Projects whose `liveUpdate.run` won't run, with the reason, so a command
+/// that can't take effect isn't silently dropped.
+pub fn unused_run_commands(
+    projects: &QueryProjectsOutput,
+    images: &[Image],
+) -> Vec<(String, &'static str)> {
+    projects
+        .projects
+        .iter()
+        .filter(|project| configured_run(project).is_some())
+        .filter_map(|project| {
+            let reason = match images.iter().find(|image| image.project == project.id) {
+                None => "the project has no image (<property>project.tilt.image</property>), or images are turned off",
+                Some(Image { live_update: None, .. }) => {
+                    "its image has nothing to sync (the project and its dependencies are the workspace root)"
                 }
-                Some(_) => {
-                    return Err(invalid(
-                        "<property>run</property> must be a command string or a non-empty list of strings",
-                    ));
-                }
+                Some(_) => return None,
             };
 
-            // Settings turn it on, even when the workspace turns it off.
-            Ok(LiveUpdateSetting {
-                enabled: Some(true),
-                run,
-            })
-        }
-        _ => Err(invalid(
-            "must be a boolean or an object with <property>run</property>",
-        )),
-    }
+            Some((project.id.clone(), reason))
+        })
+        .collect()
 }
 
 /// The first malformed `project.tilt.liveUpdate`, as an error message.
@@ -909,7 +938,7 @@ mod tests {
 
     #[test]
     fn run_and_restart_combine() {
-        let (mut projects, tasks) = web_with_live_update(r#"{ "run": ["codegen"] }"#);
+        let (mut projects, tasks) = fixture();
         let web = projects
             .projects
             .iter_mut()
@@ -953,7 +982,8 @@ mod tests {
         assert!(web_live_update(r#"{ "run": "codegen" }"#, &config).is_some());
         assert!(web_live_update("true", &config).is_some());
         assert!(web_live_update("false", &TiltExtensionConfig::default()).is_none());
-        // Settings without `run` are just the defaults.
+        // Settings without `run` leave the workspace default.
+        assert!(web_live_update("{}", &config).is_none());
         assert_eq!(
             web_live_update("{}", &TiltExtensionConfig::default())
                 .unwrap()
@@ -963,16 +993,46 @@ mod tests {
     }
 
     #[test]
+    fn reports_run_commands_that_wont_run() {
+        let (projects, tasks) = web_with_live_update(r#"{ "run": "codegen" }"#);
+        let images = plan_images(
+            &projects,
+            &tasks,
+            &TiltExtensionConfig::default(),
+            &config_files(),
+        );
+
+        assert!(unused_run_commands(&projects, &images).is_empty());
+
+        // Images turned off for the workspace.
+        let unused = unused_run_commands(&projects, &[]);
+
+        assert_eq!(unused.len(), 1);
+        assert_eq!(unused[0].0, "web");
+        assert!(unused[0].1.contains("has no image"));
+
+        // An image with nothing to sync.
+        let images: Vec<Image> = images
+            .into_iter()
+            .map(|image| Image {
+                live_update: None,
+                ..image
+            })
+            .collect();
+        let unused = unused_run_commands(&projects, &images);
+
+        assert!(unused[0].1.contains("nothing to sync"), "{unused:?}");
+    }
+
+    #[test]
     fn rejects_malformed_live_update_settings() {
         for (setting, expected) in [
             ("\"yes\"", "must be a boolean or an object"),
             ("[]", "must be a boolean or an object"),
-            (
-                r#"{ "runn": "x" }"#,
-                "unknown setting <property>runn</property>",
-            ),
-            (r#"{ "run": "" }"#, "must be a command string"),
-            (r#"{ "run": [] }"#, "must be a command string"),
+            (r#"{ "runn": "x" }"#, "unknown field `runn`, expected `run`"),
+            (r#"{ "run": "" }"#, "is an empty command"),
+            (r#"{ "run": " " }"#, "is an empty command"),
+            (r#"{ "run": [] }"#, "must start with a command"),
             (r#"{ "run": ["a", 1] }"#, "must be a command string"),
             (r#"{ "run": 5 }"#, "must be a command string"),
             (r#"{ "run": [" "] }"#, "must start with a command"),
