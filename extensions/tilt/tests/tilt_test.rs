@@ -29,15 +29,18 @@ fn create_fake_moon(sandbox: &MoonWasmSandbox) {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
+    // A plain `exit` ends cmd.exe with that code; `exit /b` inside a block
+    // doesn't reliably set the exit code of a batch file run directly.
     #[cfg(windows)]
     sandbox.create_file(
         "fake-moon.cmd",
-        "@if \"%1\"==\"run\" (\r\n\
-         \x20 echo %*> \"%~dp0ran.txt\"\r\n\
-         \x20 if \"%2\"==\"api:fail\" exit /b 3\r\n\
-         \x20 exit /b 0\r\n\
-         )\r\n\
-         @type \"%~dp0%2.json\"\r\n",
+        "@if \"%1\"==\"run\" goto run\r\n\
+         @type \"%~dp0%2.json\"\r\n\
+         @exit /b\r\n\
+         :run\r\n\
+         @echo %*> \"%~dp0ran.txt\"\r\n\
+         @if \"%2\"==\"api:fail\" exit 3\r\n\
+         @exit 0\r\n",
     );
 }
 
