@@ -78,9 +78,10 @@ moon ext tilt -- focus api             # run only these projects in the running 
 moon ext tilt -- ci [projects...]      # `tilt ci` for these projects (or everything)
 moon ext tilt -- down                  # `tilt down`: tear down resources Tilt created
 moon ext tilt -- exec api:db-migrate   # run a task where Tilt runs its project (see below)
+moon ext tilt -- export-k8s api        # migrate off project.tilt.k8s (see below)
 ```
 
-Extra Tilt flags go after another `--`, e.g. `moon ext tilt -- up web -- --legacy`. With containers, `up`, `focus`, and `ci` also take `--edit`/`--edit-affected` ([see below](#building-only-some-images-from-source)).
+`up`, `ci`, and `down` pass extra Tilt flags given after another `--`, e.g. `moon ext tilt -- up web -- --legacy`. With containers, `up`, `focus`, and `ci` also take `--edit`/`--edit-affected` ([see below](#building-only-some-images-from-source)).
 
 ## How it works
 
@@ -96,7 +97,15 @@ Extra Tilt flags go after another `--`, e.g. `moon ext tilt -- up web -- --legac
 | `inputs`, `outputs`, `.gitignore` | `deps` and `ignore`, matching exactly what moon hashes. See below. |
 | project ID | `labels` (groups resources in the UI) |
 
-Every resource runs `moon exec <target> --upstream none --on-failure bail --ignore-ci-checks`, which is what `moon run` does, except that it also runs in CI. `moon run` skips tasks with `runInCI: false` (the default for persistent tasks) when `CI` is set, which would stop `moon ext tilt -- ci` from starting any server there. moon still handles caching, toolchains, and environment, while Tilt owns ordering. Interactive tasks, and tasks that run Tilt itself, are never exposed, even when tagged. Neither are tasks that depend on one, directly or through other such tasks: a `tilt-open` task that runs after `tilt-up` is meant to follow Tilt from moon, and as a resource it would start before Tilt is up (Tilt ignores `resource_deps` on resources that don't exist). The generated file lists the ones it left out, with the dependency that caused it:
+Every resource runs `moon exec <target> --upstream none --on-failure bail --ignore-ci-checks`. That is `moon run`, except it also runs tasks with `runInCI: false` (the default for persistent tasks) when `CI` is set, so `moon ext tilt -- ci` can start servers. moon still handles caching, toolchains, and environment, while Tilt owns ordering.
+
+Some tasks are never exposed, even when tagged:
+
+- **Interactive tasks**, which need a terminal.
+- **Tasks that run Tilt itself.**
+- **Tasks that depend on one**, directly or through other such tasks. A `tilt-open` task that runs after `tilt-up` is meant to follow Tilt from moon. As a resource it would start before Tilt is up, because Tilt ignores `resource_deps` on resources that don't exist.
+
+The generated file lists the tasks it left out for the last reason, with the dependency that caused it:
 
 ```python
 # Not exposed: these tasks depend on a task that runs Tilt (directly, or
@@ -115,7 +124,7 @@ web:dev  waits on  api:serve  waits on  db:serve
 ```
 
 - **Libraries are walked through.** Projects without services (like `api-client`) are skipped, and the walk continues to their own dependencies until it reaches projects that have services.
-- **Upstream services are always included.** `db:serve` isn't tagged, but `api:serve` depends on it, so it's added to Tilt. Set `includeUpstreamServices: false` to only link services that are already selected. Selecting a project also selects its dependencies' other resources (see [Selecting what runs](#one-tilt-instance-selected-by-project)); that setting keeps the selection to the project's own.
+- **Upstream services are included.** `db:serve` isn't tagged, but `api:serve` depends on it, so it's added to Tilt. Set `includeUpstreamServices: false` to only link services that are already selected. That also stops a project ID from [selecting](#one-tilt-instance-selected-by-project) its dependencies' resources.
 - **Only runtime scopes count.** By default only `production`, `development`, and `peer` dependencies are followed. `build`-scoped dependencies (tooling, codegen) are not services your app talks to. Change this with `dependencyScopes`.
 - **Only services are linked.** Non-persistent resources only follow their task `deps`.
 
@@ -128,9 +137,9 @@ project:
     dependsOn: ["api"]
 ```
 
-It links services and [workloads](#workloads-your-tiltfiles-deploy) exactly like a moon dependency in `dependencyScopes`: `docs`'s services wait on `api`'s, `api`'s are brought up with them, and `moon ext tilt -- up docs` starts `api` too. Images don't follow it. An ID that isn't a moon project fails generation. With `linkProjectDependencies: false`, it's ignored along with moon's own dependencies.
+It links services and [workloads](#workloads-your-tiltfiles-deploy) exactly like a moon dependency in `dependencyScopes`. `docs`'s services wait on `api`'s, and `moon ext tilt -- up docs` starts `api` too. Images don't follow it. An ID that isn't a moon project fails generation. `linkProjectDependencies: false` ignores it, along with moon's own dependencies.
 
-Tilt considers a local `serve_cmd` resource ready as soon as it starts. So for local services "waits on" means "starts after", not "starts after it's accepting connections". For [workloads](#workloads-your-tiltfiles-deploy), give the container a readiness probe in your manifest.
+Tilt considers a local `serve_cmd` resource ready as soon as it starts. So for local services, "waits on" means "starts after", not "starts after it accepts connections". For [workloads](#workloads-your-tiltfiles-deploy), give the container a readiness probe in your manifest.
 
 ### What triggers a re-run or restart
 
@@ -162,7 +171,7 @@ project:
     serviceRestart: "inputs"
 ```
 
-**Your own resources** (in your `Tiltfile` or project Tiltfiles) get the gitignore patterns too, through `watch_settings()`. That means no rebuilds for `node_modules`/`dist` churn, and no inotify watches spent on them. In a test with 6,000 `node_modules` directories, Tilt used 3 watches instead of 6,004. Paths that moon resources need despite being gitignored stay watched: explicit input files, outputs services restart on, moon config, and Tilt's own Tiltfiles. Disable with `globalGitignore: false`.
+**Your own resources** (in your `Tiltfile` or project Tiltfiles) get the gitignore patterns too, through `watch_settings()`. Churn in `node_modules` or `dist` triggers no rebuilds and uses no inotify watches. Gitignored paths that moon resources need stay watched: explicit input files, outputs services restart on, moon config, and Tilt's own Tiltfiles. Disable with `globalGitignore: false`.
 
 ### One Tilt instance, selected by project
 
@@ -177,9 +186,11 @@ The generated file accepts project IDs as Tiltfile args, so the same selection w
 | Tilt UI | edit the Tiltfile args |
 | `tilt_config.json` | `{"to-run": ["web"]}` next to the `Tiltfile` remembers a developer's selection |
 
-A project's selection includes the selections of the projects it depends on at runtime (moon `dependsOn` in `dependencyScopes`, plus `project.tilt.dependsOn`), followed transitively and through libraries like [service dependencies](#service-dependencies-from-the-project-graph). What a dependency contributes is what it needs at runtime: its services, its declared workloads, and the `project.tilt.resources` its included project Tiltfile defines, not its build or other one-off tasks (those still run when a selected resource's task depends on them). So if `web` depends on `ingress`, and `ingress/Tiltfile` defines an `ingress-routes` resource listed in `project.tilt.resources`, `moon ext tilt -- up web` starts the routes too, not only `ingress`'s workload. Set `includeUpstreamServices: false` (or `linkProjectDependencies: false`) and a project ID selects only its own resources.
+A project's selection includes what the projects it depends on at runtime need to run. Runtime dependencies are moon `dependsOn` in `dependencyScopes` plus `project.tilt.dependsOn`, followed transitively and through libraries like [service dependencies](#service-dependencies-from-the-project-graph). A dependency contributes its services, its declared workloads, and its `project.tilt.resources`. Its build and other one-off tasks are left out, though they still run when a selected task depends on them.
 
-Tilt only re-applies a selection when the args change, so editing `project.tilt.dependsOn` while Tilt runs doesn't enable the new dependencies by itself. Run `up` or `focus` again with the same projects: moon passes a throwaway `(reapply)` arg first, which Tilt treats as a change but selects the same resources, so nothing is disabled in between. From the Tilt CLI, `tilt args -- '(reapply)' web` followed by `tilt args -- web` does the same.
+For example, `web` depends on `ingress`, whose Tiltfile defines an `ingress-routes` resource listed in `project.tilt.resources`. Then `moon ext tilt -- up web` starts the routes as well as `ingress`'s workload. With `includeUpstreamServices: false` or `linkProjectDependencies: false`, a project ID selects only its own resources.
+
+Tilt only re-applies a selection when the args change, so editing `project.tilt.dependsOn` while Tilt runs doesn't enable the new dependencies. Run `up` or `focus` again with the same projects. moon first passes a throwaway `(reapply)` arg, which Tilt treats as a change while selecting the same resources, so nothing is disabled in between. From the Tilt CLI, run `tilt args -- '(reapply)' web` and then `tilt args -- web`.
 
 Raw Tilt resource names work too (`tilt args -- web:dev`). Unknown names are rejected by Tilt, which keeps the current selection.
 
@@ -221,7 +232,7 @@ A project with declared workloads is **containerized**:
 - **The workloads join the graph.** Each workload waits on the project's upstream services (pulling them in), and services of projects that depend on `api` wait on every one of its workloads.
 - **Its services don't also run on the host.** Persistent tasks, and anything selected through the project's tag or `includePersistent`, aren't local resources, even when a persistent task is tagged itself. A non-persistent task tagged itself (a codegen or schema-export step, say) is still a local resource, with its task dependencies.
 
-The extension decorates each workload with `k8s_resource(...)` or `dc_resource(...)`, adding `resource_deps` and a label with the project ID. Tilt merges these with your own calls, so labels, dependencies, port-forwards, and other settings from your Tiltfile are kept. If your Tiltfiles already label workloads (by role, for example) and the extra project label repeats them in the Tilt UI, set `workloadLabels: "none"` in the workspace settings to add only `resource_deps`.
+The extension decorates each workload with `k8s_resource(...)` or `dc_resource(...)`, adding `resource_deps` and a label with the project ID. Tilt merges these with your own calls, so your labels, dependencies, port-forwards, and other settings are kept. If your Tiltfiles already label workloads (by role, say) and the project label duplicates them in the UI, set `workloadLabels: "none"` to add only `resource_deps`.
 
 - **Names must match what your Tiltfile deploys**, including Helm releases from the [`helm_resource`](https://github.com/tilt-dev/tilt-extensions/tree/master/helm_resource) extension, which go under `k8s`. A declared name that nothing deploys fails Tiltfile loading with Tilt's `k8s_resource specified unknown resource "<name>"`.
 - Declare each kind under its own key: `k8s_resource` and `dc_resource` only accept their own kind of resource.
@@ -229,7 +240,7 @@ The extension decorates each workload with `k8s_resource(...)` or `dc_resource(.
 
 #### Labelling a project's other resources
 
-`workloadLabels` labels only declared workloads, and local resources from moon tasks always carry their project ID. Resources your project's Tiltfile defines itself (a `local_resource`, a `helm_repo`, another Helm release), listed in `project.tilt.resources`, get no label from the extension: Tilt can't add one after they're defined. So they'd show outside the project's group in Tilt's UI, even though its ID selects them.
+Local resources from moon tasks always carry their project ID, and `workloadLabels` covers declared workloads. Other resources your project's Tiltfile defines (a `local_resource`, a `helm_repo`, another Helm release) get no label from the extension, because Tilt can't add one after they're defined. They show outside the project's group in Tilt's UI, even when `project.tilt.resources` lets its ID select them.
 
 Label them where they're defined with `moon_labels`, which the generated `lib.star` exports. It returns the project's workload labels: `["ingress"]`, or `[]` under `workloadLabels: "none"`.
 
@@ -257,7 +268,7 @@ project:
 - **It needs the generated files**, which `moon sync` and the main Tiltfile produce. A project Tiltfile loaded on its own, before they exist, fails at the `load()`.
 - A [`lib` override](#templates) keeps the helper only if it extends the built-in section rather than replacing it.
 
-With every resource labelled this way, a workspace that labels by role can drop those labels: each resource then appears once in Tilt's UI, under the ID that `up` and `focus` take.
+Once every resource is labelled this way, a workspace that labels by role can drop those labels. Each resource then appears once in Tilt's UI, under the ID that `up` and `focus` take.
 
 ### Exec buttons
 
@@ -343,19 +354,19 @@ local(["moon", "ext", "tilt", "--", "generate"], quiet = True)
 include("./.moon/tilt/Tiltfile")
 ```
 
-The `local()` line regenerates the (gitignored) output whenever Tilt loads the Tiltfile, so a fresh clone works with a plain `tilt up`, before `moon sync` has ever run. Generation never rewrites a file whose contents didn't change (its modification time and inode stay the same), so including files that the same Tiltfile just regenerated doesn't make Tilt reload in a loop. If you'd rather not regenerate on every load (about 2 seconds in a 30-project workspace), drop the `local()` line and rely on `moon sync`. If you already have a `Tiltfile`, add both lines to it.
+If you already have a `Tiltfile`, add both lines to it. The `local()` line regenerates the gitignored output whenever Tilt loads the Tiltfile, so a fresh clone works with a plain `tilt up`. Unchanged files are never rewritten, so this doesn't make Tilt reload in a loop. To skip regenerating on every load (about 2 seconds in a 30-project workspace), drop the `local()` line and rely on `moon sync`.
 
 The output is regenerated during moon's **workspace sync**: on `moon sync`, and automatically before `moon run`/`moon ci`. Adding a project, a `Tiltfile`, a tag, or a dependency updates it without extra steps.
 
 - Files are only rewritten when their contents change, so a running `tilt up` reloads only when something actually changed.
 - Resources launched by Tilt run moon with `MOON_SKIP_SYNC_WORKSPACE=true`, so service restarts don't trigger syncs.
-- Sync failures (for example, `moon query` erroring, or a `moonBin` path that doesn't exist) are recorded on the sync operation, not raised, so they never block `moon run`. The one exception is a bare `moonBin` name (the default `moon`) that isn't on `PATH`: the host aborts that call. If moon isn't on your `PATH`, set `moonBin` to its path, or set `sync: false`.
-- In CI, moon warns about files a sync changed "that should be committed". The extension only reports the main `Tiltfile` (when it creates one), never the self-ignored output, so CI needs no `sync: false`: commit the main `Tiltfile`, and let `.moon/tilt` be generated.
+- Sync failures, such as `moon query` erroring or a missing `moonBin` path, are recorded on the sync operation, so they never block `moon run`. The exception is a bare `moonBin` name (the default `moon`) that isn't on `PATH`, which aborts the call. If moon isn't on your `PATH`, set `moonBin` to its path, or set `sync: false`.
+- In CI, moon warns about synced files "that should be committed". The extension only reports the main `Tiltfile` when it creates one, never the self-ignored output. So commit the main `Tiltfile`, and CI needs no `sync: false`.
 - `moon ext tilt -- generate --check` fails, naming the files, when any generated file is out of date, missing, or no longer produced.
 - Project Tiltfiles are evaluated relative to their own directory, as with any Tilt `include()`. Resource names must be unique across the whole workspace.
 - On macOS, `cd` into the workspace with its exact directory casing. A mismatch (e.g. `~/projects` when the folder is `~/Projects`) breaks Tilt's ignore patterns ([tilt#5271](https://github.com/tilt-dev/tilt/issues/5271)).
 
-**While Tilt runs**, a `(moon)` resource watches everything the generated file is derived from: `.moon/*` config and `.moon/tasks/`, every project's `moon.yml`, the `.gitignore` files, and `templateDir`. When one changes, it runs `moon ext tilt -- generate`, and Tilt reloads only if the output changed. It doesn't run at startup, and stays enabled whatever projects are selected. Disable with `watchConfig: false`. New projects matched by workspace globs are picked up the next time anything regenerates the output.
+**While Tilt runs**, a `(moon)` resource watches everything the output is derived from: `.moon/*` config and `.moon/tasks/`, every project's `moon.yml`, the `.gitignore` files, and `templateDir`. When one changes, it runs `moon ext tilt -- generate`, and Tilt reloads only if the output changed. It doesn't run at startup, and stays enabled whatever is selected. Disable it with `watchConfig: false`. New projects matched by workspace globs are picked up the next time anything regenerates the output.
 
 **Migrating from `Tiltfile.moon`** (versions before the `.moon/tilt` layout):
 
@@ -364,7 +375,7 @@ The output is regenerated during moon's **workspace sync**: on `moon sync`, and 
 
 ## Containers (opt-in)
 
-Container images need Linux or macOS, which includes Windows through WSL2: the build runs a POSIX shell command, which native Windows doesn't support.
+Container images need Linux or macOS, including Windows through WSL2, because the build runs a POSIX shell command.
 
 Projects can also run as containers, built from the `Dockerfile` that [`moon docker file`](https://moonrepo.dev/docs/commands/docker/file) writes to the project root, committed like any other source file (as moon recommends). The extension builds the image. Your own Kubernetes YAML, Helm chart, or Compose file deploys it, and [declaring that workload](#workloads-your-tiltfiles-deploy) connects it to moon's project graph. Both are opt-in per project, so `docker.file` settings you use for production images are left alone:
 
@@ -422,7 +433,9 @@ node_modules
 
 **Base images:** moon's generated Dockerfile installs moon with `curl ... | bash`, so the `docker.file.image` needs both (e.g. `node:22`, not `node:22-alpine`). For Alpine, use a [custom Dockerfile template](https://moonrepo.dev/docs/config/workspace#docker) that installs moon with `npm install -g @moonrepo/cli`, and set `ENV MOON_TOOLCHAIN_FORCE_GLOBALS=true`, as moon's guide shows.
 
-**Plugins inside the image build:** moon runs inside the build (`moon docker scaffold`, `moon docker setup`), so it loads your workspace's plugins there too.
+#### Plugins inside the image build
+
+moon runs inside the build (`moon docker scaffold`, `moon docker setup`), so it loads your workspace's plugins there too.
 
 - **Published locators** (`github://`, `https://`) are downloaded inside the build and just work.
 - **`file://` locators must point inside the workspace.** Paths outside it don't exist in the container.
@@ -443,8 +456,8 @@ Tilt only builds images that a deploy uses, matching on the image name:
 - **Use `project.tilt.image` verbatim in your manifest or Compose file**, registry prefix included (`tilt.dev/api`, `localhost:5000/api`). Tilt rewrites the reference to the image it built. If the names don't match, Tilt silently runs the published image instead.
 - **Remove your own build of the same image.** If your Tiltfile already calls `docker_build("tilt.dev/api", ...)` or `custom_build(...)` for that name, Tilt refuses to load: `Image for ref "tilt.dev/api" has already been defined`. Delete it when you set `project.tilt.image`.
 - **Don't set `command:` if you rely on restarts.** With `serviceRestart: "inputs"`, Live Update restarts a Kubernetes container's process by wrapping the image's entrypoint (the project's `docker.file.startTask`). A `command:` in your manifest replaces that entrypoint, so the process is never restarted after a sync. Use `args:` instead, or let the app reload itself. (Compose services are restarted as a whole container, so a Compose `command:` is simply what re-runs.)
-- **Memory:** the container runs `moon run <startTask>`, so moon itself (and the task's dependencies) runs in the pod alongside your app. Size limits for both. A small Node service peaked at about 374 MB in testing, and was OOM-killed at a 256Mi limit.
-- **Readiness:** Tilt reports a pod healthy once its containers are ready, so give it a readiness probe (e.g. a TCP check on its port). Without one, Tilt and `tilt ci`, and the services waiting on it, consider it up as soon as the container starts.
+- **Memory:** the container runs `moon run <startTask>`, so moon and the task's dependencies run in the pod alongside your app. Size limits for both. In testing, a small Node service peaked at about 374 MB and was OOM-killed at a 256Mi limit.
+- **Readiness:** give the container a readiness probe, such as a TCP check on its port. Without one, Tilt, `tilt ci`, and the services waiting on it consider it up as soon as the container starts.
 
 `--edit` decides whether the image builds from source or uses the published one ([below](#building-only-some-images-from-source)).
 
@@ -453,7 +466,7 @@ Tilt only builds images that a deploy uses, matching on the image name:
 Source changes are synced into running containers instead of rebuilding the image ([Tilt Live Update](https://docs.tilt.dev/live_update_reference.html)). In testing, a source edit was live in about 1 second, compared with a full rebuild and redeploy.
 
 - **Synced:** the project's directory and those of the projects it depends on, to the same path under the image's `WORKDIR` (`/app` in moon's Dockerfiles), e.g. `api` → `/app/api`.
-- **Full rebuild instead:** moon config, root-level task inputs (lockfiles), and explicit task input files (manifests like `package.json`), and the project's `Dockerfile`, since those change dependencies or the image itself.
+- **Full rebuild instead:** moon config, root-level task inputs (lockfiles), explicit task input files (manifests like `package.json`), and the project's `Dockerfile`, because those change dependencies or the image itself.
 - **After syncing**, the same `serviceRestart` setting as local services decides:
   - default: the app is expected to reload itself (webpack, vite, nodemon, `node --watch`)
   - `serviceRestart: "inputs"`: the process is restarted with Tilt's [`restart_process`](https://github.com/tilt-dev/tilt-extensions/tree/master/restart_process) extension, re-running the project's `docker.file.startTask`. The extension is fetched from GitHub when the Tiltfile loads. Projects whose [declared workloads](#workloads-your-tiltfiles-deploy) are all Compose services restart the container instead (`restart_container()`), because Tilt doesn't support `restart_process` for Compose. The container re-runs its CMD, which is the same `startTask`.

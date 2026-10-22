@@ -36,10 +36,10 @@ Each plugin is a `cdylib` crate compiled to `wasm32-wasip1`. Pure logic lives in
 
 ## Development
 
-You need [proto](https://moonrepo.dev/docs/proto/install) **0.60 or newer** (moon 2.6 requires it) and rustup. moon and Rust are pinned in `.prototools` and `rust-toolchain.toml`.
+You need [proto](https://moonrepo.dev/docs/proto/install) **0.60 or newer** (moon 2.6 requires it) and rustup. moon, Node, and OpenSpec are pinned in `.prototools`. Rust is pinned in `.moon/toolchains.yml`, which moon syncs to `rust-toolchain.toml`, and rustup installs it with the `wasm32-wasip1` target on first use.
 
 ```sh
-proto install                     # moon + Rust (incl. the wasm32-wasip1 target)
+proto install                     # moon, Node, and OpenSpec
 moon run :build                   # release .wasm builds (used by tests and dogfooding)
 moon run :test                    # native unit tests + WASM integration tests
 moon run :lint root:format        # clippy (-D warnings) + rustfmt
@@ -52,7 +52,7 @@ rustup component add llvm-tools
 export AR_wasm32_wasip1="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin/llvm-ar"
 ```
 
-Integration tests load the built `.wasm` into a sandboxed host via `moon_pdk_test_utils` / `proto_pdk_test_utils`, which is why `test` depends on `build`. The harness looks in `target/wasm32-wasip1/release` before `debug`. So if you run `cargo test` by hand, rebuild with `--release` first, or a stale release build will be tested. Some tool tests download real Tilt releases.
+Integration tests load the built `.wasm` into a sandboxed host (`moon_pdk_test_utils`, `proto_pdk_test_utils`), so `test` depends on `build`. The harness prefers `target/wasm32-wasip1/release` over `debug`: if you run `cargo test` by hand, rebuild with `--release` first, or it tests a stale build. Some tool tests download real Tilt releases.
 
 ### Trying a plugin locally
 
@@ -64,7 +64,7 @@ tilt:
   plugin: "file://../../../target/wasm32-wasip1/release/tilt_extension.wasm"
 ```
 
-`file://` paths are for local development only. They must point inside the consuming workspace if moon also runs inside container builds (see the Tilt extension's container docs). moon caches the project graph, so after rebuilding a plugin, delete `.moon/cache` in the consuming workspace.
+`file://` paths are for local development. If moon also runs inside container builds, they must point inside the consuming workspace (see [Plugins inside the image build](./extensions/tilt#plugins-inside-the-image-build)). moon caches plugins with the project graph, so delete `.moon/cache` in the consuming workspace after rebuilding one.
 
 ### Adding a plugin
 
@@ -76,7 +76,7 @@ tilt:
 
 Changes are planned with [OpenSpec](https://github.com/Fission-AI/OpenSpec) before they're built. Specs for the plugins' behavior live in [`openspec/specs/`](./openspec/specs), and proposed changes in [`openspec/changes/`](./openspec/changes).
 
-OpenSpec is pinned in `.prototools` and installed by `proto install`, through proto's npm backend (needs proto 0.57+, so run `proto upgrade` first if needed). That puts `openspec` on `PATH` for you, for AI assistants, and for moon.
+OpenSpec is pinned in `.prototools` and installed by `proto install` through proto's npm backend, so the same `openspec` is on `PATH` for you, AI assistants, and moon.
 
 With Claude Code (instructions in [`.claude/`](./.claude)):
 
@@ -96,7 +96,7 @@ openspec list                   # changes in progress (or --specs)
 openspec view                   # interactive dashboard
 ```
 
-Project-wide guidance for AI-written artifacts is in [`openspec/config.yaml`](./openspec/config.yaml). To upgrade OpenSpec, bump its version in `.prototools`, then run `proto install` and `moon run root:openspec-update`. OpenSpec collects anonymous usage telemetry outside CI; opt out with `openspec config set telemetry.enabled false`.
+Project-wide guidance for AI-written artifacts is in [`openspec/config.yaml`](./openspec/config.yaml). To upgrade OpenSpec, bump its version in `.prototools`, then run `proto install` and `moon run root:openspec-update`. OpenSpec collects anonymous telemetry outside CI. Opt out with `openspec config set telemetry.enabled false`.
 
 ## Commit messages
 
@@ -128,8 +128,8 @@ Releases are automated with [release-plz](https://release-plz.dev) ([`release-pl
 
 1. **On every push to `main`**, release-plz opens or updates a **release PR**. It bumps the version and changelog of every plugin with releasable commits since its last release.
 2. **Merging the release PR** tags each bumped plugin (`<crate>-v<version>`, e.g. `tilt_extension-v0.2.0`), then dispatches [`release.yml`](./.github/workflows/release.yml) for each tag.
-3. **`release.yml`** uses [`moonrepo/build-wasm-plugin`](https://github.com/moonrepo/build-wasm-plugin) to build, `wasm-opt`, strip, and checksum the plugin. It creates the GitHub release with the `.wasm` attached and the changelog entry as notes, and publishes to ghcr.io.
+3. **`release.yml`** builds, optimizes, strips, and checksums the plugin with [`moonrepo/build-wasm-plugin`](https://github.com/moonrepo/build-wasm-plugin). It creates the GitHub release with the `.wasm` attached and the changelog entry as notes, and publishes the plugin to ghcr.io.
 
-The release PR is opened with GitHub Actions' token, so CI doesn't run on it automatically. It only changes versions and changelogs, which were already tested on `main`. To release by hand instead, push a tag yourself (`git tag tilt_tool-v0.1.2 && git push origin tilt_tool-v0.1.2`) after bumping the version and changelog.
+The release PR is opened with GitHub Actions' token, so CI doesn't run on it. It only changes versions and changelogs of code already tested on `main`. To release by hand, bump the version and changelog, then push a tag (`git tag tilt_tool-v0.1.2 && git push origin tilt_tool-v0.1.2`).
 
 Consumers then reference it with a `github://` locator ([see above](#using-the-plugins)). A pinned locator uses the full release tag (`tilt_extension@tilt_extension-v0.1.0`), because moon looks the tag up verbatim.
