@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.2](https://github.com/spaceribs/moon-plugins/compare/tilt_toolchain-v0.1.1...tilt_toolchain-v0.1.2) - 2026-10-22
+
+### Fixed
+
+- *(tilt)* skip generation during workspace sync inside images
+
+### Other
+
+- *(tilt)* MOON_SKIP_SYNC_WORKSPACE doesn't avoid loading the extension
+- tighten the READMEs and fix inaccuracies
+
 ## [0.1.1](https://github.com/spaceribs/moon-plugins/compare/tilt_toolchain-v0.1.0...tilt_toolchain-v0.1.1) - 2026-10-21
 
 ### Fixed
