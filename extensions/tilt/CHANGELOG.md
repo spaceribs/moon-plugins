@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.6.0](https://github.com/spaceribs/moon-plugins/compare/tilt_extension-v0.5.0...tilt_extension-v0.6.0) - 2026-10-22
+
+### Added
+
+- *(tilt)* export moon_labels from lib.star for project Tiltfiles
+- *(tilt)* generate exec buttons from moon tasks tagged tilt-exec
+
+### Fixed
+
+- *(tilt)* only pull in what dependencies need at runtime when selecting
+- *(tilt)* select a project's dependencies' resources too
+
+### Other
+
+- *(tilt)* exit the Windows fake moon with a plain exit
+
 ## [0.5.0](https://github.com/spaceribs/moon-plugins/compare/tilt_extension-v0.4.0...tilt_extension-v0.5.0) - 2026-10-22
 
 ### Added
