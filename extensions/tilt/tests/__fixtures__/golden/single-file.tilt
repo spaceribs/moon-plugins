@@ -16,6 +16,24 @@ _MOON_GITIGNORE = [
     "!" + _moon_path("**/keep"),
 ]
 
+# Labels each project's workloads get. Project Tiltfiles label their own
+# resources the same way, e.g. in ingress/Tiltfile:
+#   load("../.moon/tilt/lib.star", "moon_labels")
+#   local_resource("ingress-routes", ..., labels = moon_labels("ingress"))
+_MOON_PROJECT_LABELS = {
+    "api": ["api"],
+    "api-client": ["api-client"],
+    "db": ["db"],
+    "docs": ["docs"],
+    "tooling": ["tooling"],
+    "web": ["web"],
+}
+
+def _moon_labels(project):
+    if project not in _MOON_PROJECT_LABELS:
+        fail("moon_labels: %r isn't a moon project" % project)
+    return list(_MOON_PROJECT_LABELS[project])
+
 # Apply them to every resource, including ones in your own Tiltfiles. Paths
 # moon resources need despite being gitignored are re-included.
 watch_settings(ignore = _MOON_GITIGNORE + ["!" + _moon_path(".moon/workspace.yml"), "!" + _moon_path("Tiltfile"), "!" + _moon_path("Tiltfile.moon"), "!" + _moon_path("docs/Tiltfile"), "!" + _moon_path("web/generated"), "!" + _moon_path("web/generated/**"), "!" + _moon_path("web/moon.yml")])

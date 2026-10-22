@@ -102,6 +102,9 @@ pub struct TemplateProject {
     /// moon resources plus `project.tilt.resources` (e.g. ones defined in
     /// the project's own Tiltfile).
     pub selection: Vec<String>,
+    /// Labels its declared workloads get, and that `moon_labels()` returns
+    /// for it: its ID, or none with `workloadLabels: "none"`.
+    pub labels: Vec<String>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -352,7 +355,7 @@ EXTRA = True{% endblock footer %}"#,
         assert!(output.starts_with("_MOON_ROOT = "));
         assert!(output.contains("\nEXTRA = True\n"));
         // The exports stay outside the overridable blocks.
-        assert!(output.ends_with("MOON_GITIGNORE = _MOON_GITIGNORE"));
+        assert!(output.ends_with("MOON_GITIGNORE = _MOON_GITIGNORE\nmoon_labels = _moon_labels"));
     }
 
     #[test]
