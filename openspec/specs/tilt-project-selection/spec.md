@@ -39,11 +39,14 @@ When any selection is active, the generated Tiltfile SHALL keep the `(moon)` reg
 - **THEN** the running instance's args become `web docs` and no new Tilt process starts
 
 ### Requirement: up and focus re-apply an unchanged selection
-When `up` or `focus` leaves the running instance's Tiltfile args unchanged, they SHALL still make Tilt re-apply the selection, so edits to the generated selection (such as `project.tilt.dependsOn`) take effect. They SHALL do this by first setting the args with a `(reapply)` marker, which the generated Tiltfile drops where it parses its args (so neither the selection nor `MOON_CFG` sees it, and the same resources stay enabled in between), waiting for Tilt to start loading the Tiltfile, and then setting the real args. Changed args SHALL be set once, without the marker. A marker left in the running args (say, if setting the real args failed) SHALL NOT be treated as a project.
+When `up` or `focus` leaves the running instance's Tiltfile args unchanged, they SHALL still make Tilt re-apply the selection, so edits to the generated selection (such as `project.tilt.dependsOn`) take effect. They SHALL first set the args with a `(reapply)` marker, wait for Tilt to start loading the Tiltfile, and then set the real args. Changed args SHALL be set once, without the marker.
 
 #### Scenario: Dependency added while running
 - **WHEN** Tilt runs with `web` selected, `web` gains `project.tilt.dependsOn: ["ingress"]`, and the user runs `moon ext tilt -- focus web`
 - **THEN** `ingress` is enabled and no resource is disabled in between
+
+### Requirement: The reapply marker selects nothing
+The generated Tiltfile SHALL drop the `(reapply)` marker where it parses its args, so neither the selection nor `MOON_CFG` sees it and the same resources stay enabled while it is set. `up` and `focus` SHALL NOT treat a marker left in the running args (say, if setting the real args failed) as a project.
 
 #### Scenario: Marker is not a selection
 - **WHEN** Tilt runs with args `(reapply) web`
