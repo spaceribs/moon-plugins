@@ -2,7 +2,8 @@
 {%- block selection -%}
 {%- if select_by_project %}
 # Select what runs with moon project IDs (or resource names) as Tilt args.
-# A project selects its resources, and Tilt adds their resource_deps:
+# A project selects its resources and the services, workloads, and project
+# Tiltfile resources of what it depends on. Tilt adds their resource_deps:
 #   tilt up -- web     tilt args -- web docs     tilt args --clear (everything)
 _MOON_PROJECTS = {
 {%- for project in projects %}{% if project.selection %}
