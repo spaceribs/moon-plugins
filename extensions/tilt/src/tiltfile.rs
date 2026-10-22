@@ -2018,8 +2018,9 @@ k8s_yaml("deploy.yaml"){% endblock footer %}"#
         ));
         assert!(output.contains("config.define_string_list(\"to-run\", args = True"));
         assert!(output.contains("config.set_enabled_resources(_moon_enabled)"));
+        // Dropped where the args are parsed, so nothing reading them sees it.
         assert!(output.contains(&format!(
-            "if _moon_name == \"{}\":\n        continue\n",
+            "_moon_cfg[\"to-run\"] = [name for name in _moon_cfg[\"to-run\"] if name != \"{}\"]\n",
             crate::images::REAPPLY_MARKER
         )));
 
@@ -2186,7 +2187,7 @@ k8s_yaml("deploy.yaml"){% endblock footer %}"#
         .unwrap();
 
         assert!(output.contains("config.define_string_list(\"to-edit\""));
-        assert!(output.contains("_moon_cfg = config.parse()\n"));
+        assert!(output.contains("_moon_cfg = dict(config.parse())\n"));
         assert!(output.contains(
             "if _moon_edit(\"web\"):\n    custom_build(\n        \"tilt.dev/web\",\n        \"moon docker file web ../.moon/cache/tilt/web.Dockerfile --defaults && docker build -t $EXPECTED_REF -f .moon/cache/tilt/web.Dockerfile .\",\n        deps = [_moon_path(\"web\")],\n        ignore = [_moon_path(\"web/generated/**/*\")],\n        dir = _MOON_ROOT,\n        env = _MOON_ENV,\n    )\n"
         ));

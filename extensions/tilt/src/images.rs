@@ -362,7 +362,8 @@ impl TiltArgs {
                         .get_or_insert_with(Vec::new)
                         .push(value.clone());
                 }
-            } else {
+            } else if arg != REAPPLY_MARKER {
+                // A marker left by an interrupted re-apply isn't a project.
                 parsed.to_run.push(arg.clone());
             }
         }
@@ -880,6 +881,18 @@ mod tests {
                 strings(&["args", "--", "(reapply)", "web", "--to-edit", "web"]),
                 strings(&["args", "--", "web", "--to-edit", "web"]),
             ]
+        );
+    }
+
+    #[test]
+    fn a_leftover_marker_is_dropped_and_replaced_once() {
+        let current = strings(&["(reapply)", "web"]);
+        let args = TiltArgs::parse(&current);
+
+        assert_eq!(args.to_run, ["web"]);
+        assert_eq!(
+            args.set_commands(&current),
+            vec![strings(&["args", "--", "web"])]
         );
     }
 

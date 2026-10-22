@@ -848,9 +848,9 @@ fn start_tilt(
     run_tilt(root, config, command, tilt_args)
 }
 
-/// The Tiltfile args of the running Tilt instance, or `None` if Tilt isn't
+/// The running Tilt instance's `(Tiltfile)` object, or `None` if Tilt isn't
 /// running (on `TILT_PORT`, default 10350).
-fn running_args(root: &VirtualPath, config: &TiltExtensionConfig) -> Option<Vec<String>> {
+fn running_tiltfile(root: &VirtualPath, config: &TiltExtensionConfig) -> Option<serde_json::Value> {
     let output = exec(
         tilt_command(
             root,
@@ -872,7 +872,13 @@ fn running_args(root: &VirtualPath, config: &TiltExtensionConfig) -> Option<Vec<
         return None;
     }
 
-    let tiltfile: serde_json::Value = serde_json::from_str(&output.stdout).ok()?;
+    serde_json::from_str(&output.stdout).ok()
+}
+
+/// The Tiltfile args of the running Tilt instance, or `None` if Tilt isn't
+/// running.
+fn running_args(root: &VirtualPath, config: &TiltExtensionConfig) -> Option<Vec<String>> {
+    let tiltfile = running_tiltfile(root, config)?;
 
     Some(
         tiltfile["spec"]["args"]
@@ -884,6 +890,29 @@ fn running_args(root: &VirtualPath, config: &TiltExtensionConfig) -> Option<Vec<
     )
 }
 
+/// When the running Tilt last started loading its Tiltfile.
+fn last_load_start(root: &VirtualPath, config: &TiltExtensionConfig) -> Option<String> {
+    let tiltfile = running_tiltfile(root, config)?;
+    let status = &tiltfile["status"];
+
+    status["running"]["startedAt"]
+        .as_str()
+        .or_else(|| status["terminated"]["startedAt"].as_str())
+        .map(String::from)
+}
+
+/// Wait (up to about 10 seconds) for Tilt to start a Tiltfile load after
+/// `started`. Gives up quietly: the next args are set either way.
+fn wait_for_load_after(root: &VirtualPath, config: &TiltExtensionConfig, started: Option<&str>) {
+    for _ in 0..50 {
+        if last_load_start(root, config).as_deref() != started {
+            return;
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
 /// Replace the running Tilt's selection, re-applying it even when the args
 /// are unchanged. Tilt enables the selected resources plus their
 /// dependencies, and rejects unknown names.
@@ -893,11 +922,21 @@ fn set_args(
     current: &[String],
     args: &TiltArgs,
 ) -> AnyResult<()> {
-    for command in args.set_commands(current) {
+    let commands = args.set_commands(current);
+    let last = commands.len() - 1;
+
+    for (index, command) in commands.into_iter().enumerate() {
+        let started = last_load_start(root, config);
         let output = exec(tilt_command(root, config, command, false)?)?;
 
         if output.exit_code != 0 {
             return Err(anyhow!("Failed to update Tilt: {}", output.get_output()));
+        }
+
+        // Tilt only reloads if the args differ from the last load's, so if it
+        // saw the marker and the real args together it would skip both.
+        if index < last {
+            wait_for_load_after(root, config, started.as_deref());
         }
     }
 
