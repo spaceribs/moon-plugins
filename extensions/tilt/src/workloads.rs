@@ -54,6 +54,15 @@ pub struct DecoratedWorkload {
     pub resource_deps: Vec<String>,
 }
 
+/// The labels the extension gives a project's declared workloads, and that
+/// `moon_labels(project)` returns to its Tiltfile: its ID, or none.
+pub fn project_labels(project_id: &str, labels: WorkloadLabels) -> Vec<String> {
+    match labels {
+        WorkloadLabels::Project => vec![project_id.to_owned()],
+        WorkloadLabels::None => vec![],
+    }
+}
+
 /// Decorations for every declared workload, given each containerized
 /// project's upstream resources (`Plan::workload_deps`).
 pub fn decorate_workloads(
@@ -82,10 +91,7 @@ pub fn decorate_workloads(
                     name,
                     kind,
                     project: project.id.clone(),
-                    labels: match labels {
-                        WorkloadLabels::Project => vec![project.id.clone()],
-                        WorkloadLabels::None => vec![],
-                    },
+                    labels: project_labels(&project.id, labels),
                     resource_deps: workload_deps.get(&project.id).cloned().unwrap_or_default(),
                 })
                 .collect::<Vec<_>>()

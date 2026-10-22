@@ -984,6 +984,7 @@ pub fn render(input: &RenderInput, config: &TiltExtensionConfig) -> Result<Gener
                 tiltfile: project_tiltfiles.contains(&tiltfile).then_some(tiltfile),
                 resources: own_resources(project),
                 selection: selections[&project.id].clone(),
+                labels: crate::workloads::project_labels(&project.id, config.workload_labels),
             }
         })
         .collect();
@@ -1823,6 +1824,7 @@ mod tests {
                     "moon_path = _moon_path",
                     "MOON_ENV = _MOON_ENV",
                     "MOON_GITIGNORE = _MOON_GITIGNORE",
+                    "moon_labels = _moon_labels",
                     "MOON_CFG = _moon_cfg",
                     "moon_edit = _moon_edit",
                 ]
@@ -1906,7 +1908,10 @@ mod tests {
         assert!(!files["images/web.tilt"].contains("restart_process"));
         // lib.star is in .moon/tilt, two levels below the workspace root.
         assert!(files["lib.star"].contains("os.path.dirname(__file__), \"../..\"))"));
-        assert!(files["lib.star"].ends_with("MOON_GITIGNORE = _MOON_GITIGNORE\n"));
+        assert!(
+            files["lib.star"]
+                .ends_with("MOON_GITIGNORE = _MOON_GITIGNORE\nmoon_labels = _moon_labels\n")
+        );
         assert!(files["args.star"].ends_with("MOON_CFG = _moon_cfg\nmoon_edit = _moon_edit\n"));
     }
 
@@ -2037,6 +2042,123 @@ mod tests {
                 assert_eq!(&overridden[path], contents, "{path}");
             }
         }
+    }
+
+    #[test]
+    fn lib_exports_moon_labels() {
+        let (projects, tasks) = fixture();
+        let lib = |workload_labels| {
+            let config = TiltExtensionConfig {
+                workload_labels,
+                ..Default::default()
+            };
+            let resources = plan_resources(&projects, &tasks, &config);
+
+            super::render(&RenderInput::new(&resources, &projects, "0.0.0"), &config)
+                .unwrap()["lib.star"]
+                .clone()
+        };
+        let labelled = lib(crate::config::WorkloadLabels::Project);
+
+        // Every project, so a typo fails instead of returning nothing.
+        assert!(labelled.contains(
+            "_MOON_PROJECT_LABELS = {\n    \"api\": [\"api\"],\n    \"api-client\": [\"api-client\"],\n    \"db\": [\"db\"],\n    \"docs\": [\"docs\"],\n    \"tooling\": [\"tooling\"],\n    \"web\": [\"web\"],\n}\n"
+        ));
+        assert!(labelled.contains(
+            "def _moon_labels(project):\n    if project not in _MOON_PROJECT_LABELS:\n        fail(\"moon_labels: %r isn't a moon project\" % project)\n    return list(_MOON_PROJECT_LABELS[project])\n"
+        ));
+        assert!(labelled.ends_with("\nmoon_labels = _moon_labels\n"));
+
+        let unlabelled = lib(crate::config::WorkloadLabels::None);
+
+        assert!(unlabelled.contains(
+            "_MOON_PROJECT_LABELS = {\n    \"api\": [],\n    \"api-client\": [],\n    \"db\": [],\n    \"docs\": [],\n    \"tooling\": [],\n    \"web\": [],\n}\n"
+        ));
+    }
+
+    #[test]
+    fn readme_label_example() {
+        let (mut projects, tasks) = fixture();
+
+        projects.projects.push(crate::query::QueryProject {
+            id: "ingress".into(),
+            source: "apps/ingress".into(),
+            config: crate::query::QueryProjectConfig {
+                project: Some(crate::query::QueryProjectMetadata {
+                    metadata: serde_json::from_str(
+                        r#"{ "tilt": { "workloads": { "k8s": ["ingress"] }, "resources": ["ingress-charts", "ingress-routes"] } }"#,
+                    )
+                    .unwrap(),
+                }),
+                ..Default::default()
+            },
+            dependencies: None,
+        });
+
+        let config = TiltExtensionConfig::default();
+        let planned = plan_with_images(&projects, &tasks, &config, &[]);
+        let files = super::render(
+            &RenderInput {
+                workloads: &planned.workloads,
+                ..RenderInput::new(&planned.resources, &projects, "0.0.0")
+            },
+            &config,
+        )
+        .unwrap();
+
+        // The README's load() path: up from apps/ingress, into outputDir.
+        assert_eq!(
+            format!(
+                "{}/{}/lib.star",
+                path_to_root("apps/ingress/Tiltfile"),
+                config.output_dir
+            ),
+            "../../.moon/tilt/lib.star"
+        );
+        // moon_labels("ingress") returns what the ingress workload is labelled.
+        assert!(files["lib.star"].contains("    \"ingress\": [\"ingress\"],\n"));
+        assert!(
+            files["workloads.tilt"]
+                .contains("k8s_resource(\n    \"ingress\",\n    labels = [\"ingress\"],\n")
+        );
+        // And its ID selects the resources labelled with it.
+        assert!(
+            files["selection.tilt"]
+                .contains("\"ingress\": [\"ingress\", \"ingress-charts\", \"ingress-routes\"],")
+        );
+    }
+
+    #[test]
+    fn templates_get_each_projects_labels() {
+        let (projects, tasks) = fixture();
+        let overrides = BTreeMap::from([(
+            "workloads".to_owned(),
+            "{% for project in projects %}{{ project.id }}={{ project.labels | starlark }}\n{% endfor %}"
+                .to_owned(),
+        )]);
+        let labels = |workload_labels| {
+            let config = TiltExtensionConfig {
+                workload_labels,
+                ..Default::default()
+            };
+            let resources = plan_resources(&projects, &tasks, &config);
+            let files = super::render(
+                &RenderInput {
+                    section_templates: Some(&overrides),
+                    ..RenderInput::new(&resources, &projects, "0.0.0")
+                },
+                &config,
+            )
+            .unwrap();
+
+            files["workloads.tilt"].clone()
+        };
+
+        assert!(
+            labels(crate::config::WorkloadLabels::Project)
+                .contains("\napi=[\"api\"]\napi-client=[\"api-client\"]\n")
+        );
+        assert!(labels(crate::config::WorkloadLabels::None).contains("\napi=[]\napi-client=[]\n"));
     }
 
     #[test]
@@ -2319,7 +2441,7 @@ k8s_yaml("deploy.yaml"){% endblock footer %}"#
 
     /// The `_MOON_PROJECTS` entry for `id`.
     fn selection_line(output: &str, id: &str) -> String {
-        output
+        output[output.find("_MOON_PROJECTS = {").expect("no selection")..]
             .lines()
             .find(|line| line.starts_with(&format!("    \"{id}\": [")))
             .unwrap_or_else(|| panic!("no selection for {id}"))

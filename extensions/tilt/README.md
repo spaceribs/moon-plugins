@@ -227,6 +227,38 @@ The extension decorates each workload with `k8s_resource(...)` or `dc_resource(.
 - Declare each kind under its own key: `k8s_resource` and `dc_resource` only accept their own kind of resource.
 - **Load Compose files before the decorations.** For Kubernetes the order doesn't matter, but Tilt rejects `dc_resource` for a service no `docker_compose()` has loaded yet (`no Docker Compose service found with name "<name>"`). Project Tiltfiles are included before the decorations, so call `docker_compose()` there, or before `include("./.moon/tilt/Tiltfile")` in your main `Tiltfile`.
 
+#### Labelling a project's other resources
+
+`workloadLabels` labels only declared workloads, and local resources from moon tasks always carry their project ID. Resources your project's Tiltfile defines itself (a `local_resource`, a `helm_repo`, another Helm release), listed in `project.tilt.resources`, get no label from the extension: Tilt can't add one after they're defined. So they'd show outside the project's group in Tilt's UI, even though its ID selects them.
+
+Label them where they're defined with `moon_labels`, which the generated `lib.star` exports. It returns the project's workload labels: `["ingress"]`, or `[]` under `workloadLabels: "none"`.
+
+```python
+# apps/ingress/Tiltfile
+load("../../.moon/tilt/lib.star", "moon_labels")
+
+load("ext://helm_resource", "helm_resource", "helm_repo")
+helm_repo("ingress-charts", "https://example.com/charts", labels = moon_labels("ingress"))
+helm_resource("ingress", "ingress-charts/ingress", resource_deps = ["ingress-charts"])
+local_resource("ingress-routes", cmd = "kubectl apply -f routes/", resource_deps = ["ingress"], labels = moon_labels("ingress"))
+```
+
+```yaml
+# apps/ingress/moon.yml
+project:
+  tilt:
+    workloads:
+      k8s: ["ingress"]
+    resources: ["ingress-charts", "ingress-routes"]
+```
+
+- **The `load()` path is relative to the Tiltfile.** Go up one `..` per directory between the project and the workspace root, then into `outputDir` (`.moon/tilt` by default).
+- **An unknown project ID fails loading**, naming it, so a typo can't leave a resource ungrouped.
+- **It needs the generated files**, which `moon sync` and the main Tiltfile produce. A project Tiltfile loaded on its own, before they exist, fails at the `load()`.
+- A [`lib` override](#templates) keeps the helper only if it extends the built-in section rather than replacing it.
+
+With every resource labelled this way, a workspace that labels by role can drop those labels: each resource then appears once in Tilt's UI, under the ID that `up` and `focus` take.
+
 ### Exec buttons
 
 Tag a task `tilt-exec` and it gets a button in Tilt that runs it where its project runs: inside the project's first [declared workload](#workloads-your-tiltfiles-deploy), or on the host for projects without workloads. Tag it `tilt-confirm` too, for destructive tasks, and the button asks before running it:
@@ -553,7 +585,7 @@ Every section gets the same variables. The `image` section also gets `image`, th
 | `tag` | The configured `tag`. |
 | `project_tiltfiles` | Workspace-relative project Tiltfiles to include. |
 | `resources` | Resources: `target`, `project`, `task`, `persistent`, `cmd`, `watch`, `only_inputs`, `ignore`, `respect_gitignore`, `resource_deps`, `labels`, `env`. |
-| `projects` | Every project: `id`, `source`, `tags`, `dependencies` (`id`, `scope`), `tiltfile` (if included), `resources` (targets and workload names), `selection` (what its ID selects). |
+| `projects` | Every project: `id`, `source`, `tags`, `dependencies` (`id`, `scope`), `tiltfile` (if included), `resources` (targets and workload names), `selection` (what its ID selects), `labels` (what its workloads are labelled, and [`moon_labels()`](#labelling-a-projects-other-resources) returns). |
 | `gitignore` | Ignore patterns translated from `.gitignore` files (rendered as `_MOON_GITIGNORE`). |
 | `gitignore_exceptions` | `!` patterns re-including gitignored paths that must stay watched. |
 | `images` | Images: `project`, `image_ref`, `dockerfile`, `command`, `watch`, `ignore`, `live_update` (`fall_back_on`, `syncs` with `local`/`remote`, `restart_entrypoint`, `restart_container`, `run` (a string or a list), or none). |

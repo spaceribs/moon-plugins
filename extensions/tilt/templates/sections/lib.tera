@@ -17,6 +17,21 @@ _MOON_GITIGNORE = [
     {{ pattern | moon_path }},
 {%- endfor %}
 ]
+
+# Labels each project's workloads get. Project Tiltfiles label their own
+# resources the same way, e.g. in ingress/Tiltfile:
+#   load("../.moon/tilt/lib.star", "moon_labels")
+#   local_resource("ingress-routes", ..., labels = moon_labels("ingress"))
+_MOON_PROJECT_LABELS = {
+{%- for project in projects %}
+    {{ project.id | starlark }}: {{ project.labels | starlark }},
+{%- endfor %}
+}
+
+def _moon_labels(project):
+    if project not in _MOON_PROJECT_LABELS:
+        fail("moon_labels: %r isn't a moon project" % project)
+    return list(_MOON_PROJECT_LABELS[project])
 {%- endblock preamble %}
 {%- block footer %}{% endblock footer %}
 
@@ -24,3 +39,4 @@ MOON_ROOT = _MOON_ROOT
 moon_path = _moon_path
 MOON_ENV = _MOON_ENV
 MOON_GITIGNORE = _MOON_GITIGNORE
+moon_labels = _moon_labels
