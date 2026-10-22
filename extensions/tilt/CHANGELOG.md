@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.2](https://github.com/spaceribs/moon-plugins/compare/tilt_extension-v0.6.1...tilt_extension-v0.6.2) - 2026-10-22
+
+### Fixed
+
+- *(tilt)* skip generation during workspace sync inside images
+
+### Other
+
+- *(tilt)* MOON_SKIP_SYNC_WORKSPACE doesn't avoid loading the extension
+- *(tilt)* document that root dependency files don't trigger image rebuilds
+
 ## [0.6.1](https://github.com/spaceribs/moon-plugins/compare/tilt_extension-v0.6.0...tilt_extension-v0.6.1) - 2026-10-22
 
 ### Fixed
