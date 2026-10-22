@@ -23,6 +23,10 @@ Changes to moon config, the project's `Dockerfile`, root-level task inputs (e.g.
 - **WHEN** a task in the image's dependency closure takes `/docs/ui/README.md` as an input
 - **THEN** `docs/ui/README.md` is both a full-rebuild file and watched by the image, and Tilt loads the Tiltfile
 
+#### Scenario: Workspace-root dependency files (known limitation)
+- **WHEN** the workspace root's lockfile, workspace or catalog manifest, or root manifest changes, and no task in the image's dependency closure takes it as an explicit input
+- **THEN** it isn't a full-rebuild file, so the change is neither synced nor rebuilt
+
 ### Requirement: Restart apps without live reload
 When the project's `serviceRestart` is `inputs` and it has a `docker.file.startTask`, the app SHALL be restarted after syncing, re-running `moon run <project>:<startTask>`: through Tilt's `restart_process` extension, or, when every workload the project declares is a Compose service, by restarting the container with `restart_container()`, since Tilt doesn't support `restart_process`'s entrypoint override for Compose. Otherwise the app SHALL be left to reload itself.
 
