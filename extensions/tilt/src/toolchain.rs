@@ -10,6 +10,28 @@ use version_spec::{MatchesVersion, UnresolvedVersionSpec, Version};
 /// `PROTO_HOME`), each at `<TOOL_DIR>/<version>/tilt`.
 pub const TOOL_DIR: &str = "/proto/tools/tilt";
 
+/// proto's home directory, as mounted into the plugin.
+pub const PROTO_MOUNT: &str = "/proto";
+
+/// `path`, a path under [`PROTO_MOUNT`], on the host, where proto's home is
+/// `proto_home`. The host runs commands outside the plugin's sandbox, so it
+/// can't resolve virtual paths itself.
+pub fn to_host_path(path: &str, proto_home: &str, windows: bool) -> String {
+    let Some(rest) = path
+        .strip_prefix(PROTO_MOUNT)
+        .filter(|rest| rest.is_empty() || rest.starts_with('/'))
+    else {
+        return path.to_owned();
+    };
+    let home = proto_home.trim_end_matches(['/', '\\']);
+
+    if windows {
+        format!("{home}{}", rest.replace('/', "\\"))
+    } else {
+        format!("{home}{rest}")
+    }
+}
+
 /// No installed version satisfies the toolchain's version.
 #[derive(Debug, PartialEq)]
 pub struct NotInstalled {
@@ -244,5 +266,34 @@ mod tests {
             assert!(error.installed.is_empty());
             assert!(error.message().contains("Installed versions: none."));
         }
+    }
+
+    #[test]
+    fn maps_proto_paths_to_the_host() {
+        assert_eq!(
+            to_host_path("/proto/tools/tilt/0.37.8/tilt", "/home/me/.proto", false),
+            "/home/me/.proto/tools/tilt/0.37.8/tilt"
+        );
+        assert_eq!(
+            to_host_path("/proto/tools/tilt/0.37.8", "/home/me/.proto/", false),
+            "/home/me/.proto/tools/tilt/0.37.8"
+        );
+        assert_eq!(
+            to_host_path(
+                "/proto/tools/tilt/0.37.8/tilt.exe",
+                "C:\\Users\\me\\.proto",
+                true
+            ),
+            "C:\\Users\\me\\.proto\\tools\\tilt\\0.37.8\\tilt.exe"
+        );
+    }
+
+    #[test]
+    fn leaves_other_paths_alone() {
+        assert_eq!(to_host_path("tilt", "/home/me/.proto", false), "tilt");
+        assert_eq!(
+            to_host_path("/protocol/tilt", "/home/me/.proto", false),
+            "/protocol/tilt"
+        );
     }
 }
