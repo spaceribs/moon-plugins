@@ -321,6 +321,12 @@ fn render_generated(root: &VirtualPath, config: &TiltExtensionConfig) -> AnyResu
     if let Some(error) = images::live_update_settings_error(&projects) {
         return Err(anyhow!(error));
     }
+
+    if let Some(error) =
+        images::missing_dockerfiles_error(&projects, config, |path| root.join(path).is_file())
+    {
+        return Err(anyhow!(error));
+    }
     let tasks: QueryTasksOutput = query_moon(root, config, "tasks")?;
     let project_tiltfiles =
         tiltfile::find_project_tiltfiles(&projects, config, |path| root.join(path).is_file());

@@ -7,7 +7,7 @@ A moon extension that runs your moon workspace in [Tilt](https://tilt.dev): one 
 - **Only affected things re-run.** Tilt watches exactly the files moon hashes as inputs, honors `.gitignore`, and leaves source edits to your dev server's own live reload.
 - **Select by project:** `moon ext tilt -- up web` runs `web` and everything it needs. Add or swap projects in the running instance.
 - **Kept in sync.** The generated Tiltfile updates on `moon sync`, before `moon run`, and while Tilt runs.
-- **Containers (opt-in).** Projects can be built from moon's generated Dockerfiles, with Live Update and only affected images built from source. The Kubernetes or Compose resources your own Tiltfiles deploy join moon's project graph.
+- **Containers (opt-in).** Projects can be built from their committed moon-generated Dockerfiles, with Live Update and only affected images built from source. The Kubernetes or Compose resources your own Tiltfiles deploy join moon's project graph.
 
 Pair it with the [Tilt toolchain](../../toolchains/tilt) to install and pin the Tilt binary.
 
@@ -276,11 +276,11 @@ The output is regenerated during moon's **workspace sync**: on `moon sync`, and 
 
 Container images need Linux or macOS, which includes Windows through WSL2: the build runs a POSIX shell command, which native Windows doesn't support.
 
-Projects can also run as containers, built from moon's [generated Dockerfiles](https://moonrepo.dev/docs/commands/docker/file). The extension builds the image. Your own Kubernetes YAML, Helm chart, or Compose file deploys it, and [declaring that workload](#workloads-your-tiltfiles-deploy) connects it to moon's project graph. Both are opt-in per project, so `docker.file` settings you use for production images are left alone:
+Projects can also run as containers, built from the `Dockerfile` that [`moon docker file`](https://moonrepo.dev/docs/commands/docker/file) writes to the project root, committed like any other source file (as moon recommends). The extension builds the image. Your own Kubernetes YAML, Helm chart, or Compose file deploys it, and [declaring that workload](#workloads-your-tiltfiles-deploy) connects it to moon's project graph. Both are opt-in per project, so `docker.file` settings you use for production images are left alone:
 
 | `moon.yml` | Result |
 | --- | --- |
-| `project.tilt.image: "name"` | image built from moon's Dockerfile, for your own resources to deploy |
+| `project.tilt.image: "name"` | image built from the project's `Dockerfile`, for your own resources to deploy |
 | `project.tilt.workloads: {...}` | project containerized: its services run as those workloads |
 | `docker.file` settings only | nothing |
 
@@ -303,14 +303,17 @@ k8s_yaml("k8s.yaml")   # a Deployment whose container uses image "tilt.dev/api"
 k8s_resource("api", port_forwards=[3001])
 ```
 
+Write the Dockerfile once with `moon docker file api`, commit `apps/api/Dockerfile`, and re-run it when the project's `docker.file` settings or moon's Dockerfile template change. Generation fails, naming the command to run, for a project with an `image` and no `Dockerfile`.
+
 Upgrading from `project.tilt.k8s`? See [Migrating from generated manifests](#migrating-from-generated-manifests).
 
 ### Images
 
-Each image is a `custom_build`. It runs `moon docker file <project>` (into `.moon/cache/tilt/`), then `docker build` with the **whole workspace as context**, which moon's Dockerfiles need for `moon docker scaffold`. The image is named `project.tilt.image`. What triggers a rebuild comes from moon's project graph, not the build context:
+Each image is a `custom_build`. It runs `docker build -f <project>/Dockerfile` with the **whole workspace as context**, which moon's Dockerfiles need for `moon docker scaffold`. The image is named `project.tilt.image`. What triggers a rebuild comes from moon's project graph, not the build context:
 
+- the project's `Dockerfile` (Live Update rebuilds instead of syncing it)
 - the source directories of the project and every project it depends on (transitively, all scopes)
-- their moon config (`.moon/*`, `moon.yml`), which the Dockerfile is generated from
+- their moon config (`.moon/*`, `moon.yml`), which decides what `moon docker scaffold` copies into the image
 - files their tasks take as explicit inputs, anywhere in the workspace outside `.moon/` (lockfiles, shared configs, docs a check reads). Live Update rebuilds instead of syncing for these, so they must trigger a rebuild too.
 - minus their task outputs (the image builds inside the container, not from host artifacts) and gitignored files
 
@@ -325,7 +328,7 @@ Every build sends the whole workspace to Docker, so keep the context small with 
 node_modules
 ```
 
-[moon's Docker guide](https://moonrepo.dev/docs/guides/docker) recommends ignoring `.moon/cache` (not portable between machines) and `.git` (moon still works in the image, with its caching disabled, and the image stays smaller). The generated Dockerfiles live in `.moon/cache/tilt/` and still build when it's ignored.
+[moon's Docker guide](https://moonrepo.dev/docs/guides/docker) recommends ignoring `.moon/cache` (not portable between machines) and `.git` (moon still works in the image, with its caching disabled, and the image stays smaller).
 
 **Base images:** moon's generated Dockerfile installs moon with `curl ... | bash`, so the `docker.file.image` needs both (e.g. `node:22`, not `node:22-alpine`). For Alpine, use a [custom Dockerfile template](https://moonrepo.dev/docs/config/workspace#docker) that installs moon with `npm install -g @moonrepo/cli`, and set `ENV MOON_TOOLCHAIN_FORCE_GLOBALS=true`, as moon's guide shows.
 
@@ -360,7 +363,7 @@ Tilt only builds images that a deploy uses, matching on the image name:
 Source changes are synced into running containers instead of rebuilding the image ([Tilt Live Update](https://docs.tilt.dev/live_update_reference.html)). In testing, a source edit was live in about 1 second, compared with a full rebuild and redeploy.
 
 - **Synced:** the project's directory and those of the projects it depends on, to the same path under the image's `WORKDIR` (`/app` in moon's Dockerfiles), e.g. `api` → `/app/api`.
-- **Full rebuild instead:** moon config, root-level task inputs (lockfiles), and explicit task input files (manifests like `package.json`), since those change dependencies or the Dockerfile itself.
+- **Full rebuild instead:** moon config, root-level task inputs (lockfiles), and explicit task input files (manifests like `package.json`), and the project's `Dockerfile`, since those change dependencies or the image itself.
 - **After syncing**, the same `serviceRestart` setting as local services decides:
   - default: the app is expected to reload itself (webpack, vite, nodemon, `node --watch`)
   - `serviceRestart: "inputs"`: the process is restarted with Tilt's [`restart_process`](https://github.com/tilt-dev/tilt-extensions/tree/master/restart_process) extension, re-running the project's `docker.file.startTask`. The extension is fetched from GitHub when the Tiltfile loads. Projects whose [declared workloads](#workloads-your-tiltfiles-deploy) are all Compose services restart the container instead (`restart_container()`), because Tilt doesn't support `restart_process` for Compose. The container re-runs its CMD, which is the same `startTask`.
@@ -376,7 +379,7 @@ Source changes are synced into running containers instead of rebuilding the imag
 
   A `run` command turns Live Update on for the project, even when the workspace turns it off. Files that need a rebuild still rebuild instead of syncing and running the command. Generation warns if the command can't run: the project has no image, images are off, or there is nothing to sync (the project and its dependencies are the workspace root).
 
-Disable it per project with `project.tilt.liveUpdate: false`, or for the workspace with `liveUpdate: false`. Edits to a custom moon Dockerfile template (e.g. `.moon/Dockerfile.tera`) aren't watched; trigger a rebuild from the Tilt UI after changing one.
+Disable it per project with `project.tilt.liveUpdate: false`, or for the workspace with `liveUpdate: false`. After changing a custom moon Dockerfile template (e.g. `.moon/Dockerfile.tera`), re-run `moon docker file` for each project; the rewritten `Dockerfile` triggers the rebuild.
 
 ### Building only some images from source
 
@@ -405,7 +408,7 @@ Earlier versions generated a Deployment and Service from `project.tilt.k8s`. Tha
 
    It writes the Deployment, a Service when you had ports, and the readiness probe, as YAML for you to maintain. It never overwrites an existing file.
 
-2. Replace `project.tilt.k8s` in the project's `moon.yml` with what the command prints. `image` keeps the image building from moon's Dockerfile (the generator implied it), and `workloads` keeps the project containerized:
+2. Replace `project.tilt.k8s` in the project's `moon.yml` with what the command prints. `image` keeps the image building (the generator implied it) from the project's `Dockerfile`, which you now commit (`moon docker file <project>`), and `workloads` keeps the project containerized:
 
    ```yaml
    project:
@@ -553,5 +556,5 @@ In a project's `moon.yml`, under `project.tilt` (moon's custom project metadata)
 | `resources` | Extra Tilt resource names (e.g. from the project's own `Tiltfile`) that the project ID selects. |
 | `dependsOn` | Runtime-only dependencies on other projects: their services and workloads are linked and brought up like a moon dependency's, but images don't follow them. See [Service dependencies](#service-dependencies-from-the-project-graph). |
 | `workloads` | Tilt resources the project's own Tiltfile deploys, by kind: `k8s` (YAML, kustomize, Helm, `helm_resource`) and `compose`. Containerizes the project. See [Workloads your Tiltfiles deploy](#workloads-your-tiltfiles-deploy). |
-| `image` | Build this project's image from moon's Dockerfile under this name (used verbatim, registry prefix included). Your own resources deploy it. |
+| `image` | Build this project's image from its committed `Dockerfile` (written by `moon docker file <project>`) under this name (used verbatim, registry prefix included). Your own resources deploy it. |
 | `liveUpdate` | `false` rebuilds the image on every change instead of syncing. An object holds settings: `run` is a command (string or list) to run in the container after each sync, without a restart, and turns Live Update on. Any other value (such as `"false"`) fails generation. |

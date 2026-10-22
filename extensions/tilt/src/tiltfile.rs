@@ -2171,8 +2171,8 @@ k8s_yaml("deploy.yaml"){% endblock footer %}"#
             project: "web".into(),
             // Registry prefixes are kept verbatim as the `custom_build` ref.
             image_ref: "tilt.dev/web".into(),
-            dockerfile: ".moon/cache/tilt/web.Dockerfile".into(),
-            command: "moon docker file web ../.moon/cache/tilt/web.Dockerfile --defaults && docker build -t $EXPECTED_REF -f .moon/cache/tilt/web.Dockerfile .".into(),
+            dockerfile: "web/Dockerfile".into(),
+            command: "docker build -t $EXPECTED_REF -f web/Dockerfile .".into(),
             watch: vec!["web".into()],
             ignore: vec!["web/generated/**/*".into()],
             live_update: None,
@@ -2189,7 +2189,7 @@ k8s_yaml("deploy.yaml"){% endblock footer %}"#
         assert!(output.contains("config.define_string_list(\"to-edit\""));
         assert!(output.contains("_moon_cfg = dict(config.parse())\n"));
         assert!(output.contains(
-            "if _moon_edit(\"web\"):\n    custom_build(\n        \"tilt.dev/web\",\n        \"moon docker file web ../.moon/cache/tilt/web.Dockerfile --defaults && docker build -t $EXPECTED_REF -f .moon/cache/tilt/web.Dockerfile .\",\n        deps = [_moon_path(\"web\")],\n        ignore = [_moon_path(\"web/generated/**/*\")],\n        dir = _MOON_ROOT,\n        env = _MOON_ENV,\n    )\n"
+            "if _moon_edit(\"web\"):\n    custom_build(\n        \"tilt.dev/web\",\n        \"docker build -t $EXPECTED_REF -f web/Dockerfile .\",\n        deps = [_moon_path(\"web\")],\n        ignore = [_moon_path(\"web/generated/**/*\")],\n        dir = _MOON_ROOT,\n        env = _MOON_ENV,\n    )\n"
         ));
         assert!(output.contains("for _moon_name in _moon_cfg.get(\"to-run\", []):"));
     }

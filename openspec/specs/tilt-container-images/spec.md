@@ -1,7 +1,7 @@
 # tilt-container-images Specification
 
 ## Purpose
-How the Tilt extension builds container images from moon's generated Dockerfiles for projects that opt in, rebuilding only what changes affect.
+How the Tilt extension builds container images from each project's committed, moon-generated `Dockerfile` for projects that opt in, rebuilding only what changes affect.
 
 ## Requirements
 
@@ -14,21 +14,28 @@ The extension SHALL build an image only for projects that set `project.tilt.imag
 
 #### Scenario: Image used by the project's own manifest
 - **WHEN** `api` sets `project.tilt.image: "api"` and its own manifest's container uses image `api`
-- **THEN** Tilt builds the image from moon's Dockerfile and deploys it through that manifest
+- **THEN** Tilt builds the image from `api/Dockerfile` and deploys it through that manifest
 
 #### Scenario: Image without a deploy
 - **WHEN** a project sets `project.tilt.image` and no resource references the image
 - **THEN** no deployment is generated for it
 
-### Requirement: Built from moon's Dockerfile with the workspace as context
-Each image SHALL be a `custom_build` named `project.tilt.image` (default: the project ID) that runs `moon docker file <project>` into `.moon/cache/tilt/` and then `docker build` with the whole workspace as context.
+### Requirement: Built from the committed Dockerfile with the workspace as context
+Each image SHALL be a `custom_build` named `project.tilt.image` (default: the project ID) that runs `docker build` on the project's `Dockerfile` (in the project root, where `moon docker file <project>` writes it) with the whole workspace as context. The extension MUST NOT generate Dockerfiles itself.
 
 #### Scenario: Build command
 - **WHEN** project `api` opts in
-- **THEN** its build runs `moon docker file api ... --defaults && docker build -t $EXPECTED_REF -f .moon/cache/tilt/api.Dockerfile .`
+- **THEN** its build runs `docker build -t $EXPECTED_REF -f api/Dockerfile .`
+
+### Requirement: A missing Dockerfile fails generation
+When images are enabled and a project with `project.tilt.image` has no `Dockerfile` in its root, generation SHALL fail with an error naming the project and the `moon docker file <project>` command that writes one.
+
+#### Scenario: Dockerfile not committed
+- **WHEN** `api` sets `project.tilt.image` and `api/Dockerfile` doesn't exist
+- **THEN** generation fails, naming `api` and `moon docker file api`
 
 ### Requirement: Rebuilds follow the project graph
-An image SHALL rebuild only when files change in the project's or its transitive dependencies' directories, their moon config, or files their tasks take as explicit inputs (anywhere in the workspace outside `.moon/`). Their task outputs, gitignored files, and extension config (`.moon/extensions.*`) MUST NOT trigger rebuilds.
+An image SHALL rebuild only when the project's `Dockerfile` changes, or files change in the project's or its transitive dependencies' directories, their moon config, or files their tasks take as explicit inputs (anywhere in the workspace outside `.moon/`). Their task outputs, gitignored files, and extension config (`.moon/extensions.*`) MUST NOT trigger rebuilds.
 
 #### Scenario: Unrelated project edited
 - **WHEN** `web` is edited and `api` doesn't depend on `web`

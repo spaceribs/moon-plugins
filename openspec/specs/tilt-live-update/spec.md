@@ -13,7 +13,7 @@ With `liveUpdate` enabled (default, overridable by `project.tilt.liveUpdate`), e
 - **THEN** it is copied to `/app/api/src` in the running container, and the image isn't rebuilt
 
 ### Requirement: Some files need a full rebuild
-Changes to moon config, root-level task inputs (e.g. lockfiles), and explicit task input files (e.g. `package.json`) SHALL trigger a full image rebuild instead of a sync. Every file that triggers a full rebuild SHALL also be watched by the image, so the generated Tiltfile always loads.
+Changes to moon config, the project's `Dockerfile`, root-level task inputs (e.g. lockfiles), and explicit task input files (e.g. `package.json`) SHALL trigger a full image rebuild instead of a sync. Every file that triggers a full rebuild SHALL also be watched by the image, so the generated Tiltfile always loads.
 
 #### Scenario: moon.yml edited
 - **WHEN** `api/moon.yml` changes
