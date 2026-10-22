@@ -21,7 +21,7 @@ moon ext tilt -- up docs      # add docs
 moon ext tilt -- focus api    # only api (and db) from now on
 ```
 
-To run a project on Kubernetes, you need Docker and a local cluster (e.g. `ctlptl create cluster kind --registry=ctlptl-registry`). Build its image from moon's Dockerfile and deploy it with your own manifest, e.g. for `api`:
+To run a project on Kubernetes, you need Docker and a local cluster (e.g. `ctlptl create cluster kind --registry=ctlptl-registry`). Build its image from the `Dockerfile` moon writes (`moon docker file api`, then commit `api/Dockerfile`) and deploy it with your own manifest, e.g. for `api`:
 
 ```yaml
 # api/moon.yml

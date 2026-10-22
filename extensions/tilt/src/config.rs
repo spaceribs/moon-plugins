@@ -74,7 +74,7 @@ pub struct TiltExtensionConfig {
     /// configuration changes while Tilt is running.
     pub watch_config: bool,
 
-    /// Build container images from moon's generated Dockerfiles for projects
+    /// Build container images from each project's committed Dockerfile for projects
     /// that opt in with `project.tilt.image`.
     pub images: bool,
 

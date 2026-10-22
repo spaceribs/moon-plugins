@@ -1,4 +1,4 @@
-{#- One project's container image, built from moon's generated Dockerfile
+{#- One project's container image, built from its committed Dockerfile
     (`moon docker file`). The build sees the whole workspace, but only changes
     to the project and what it depends on trigger a rebuild. Projects not in
     `--to-edit` use the image as published, and your own Kubernetes or Compose

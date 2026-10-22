@@ -69,7 +69,7 @@ pub struct TemplateContext<'a> {
     pub resources: &'a [crate::tiltfile::Resource],
     /// Every project in the workspace.
     pub projects: Vec<TemplateProject>,
-    /// Container images built from moon's generated Dockerfiles.
+    /// Container images built from each project's committed Dockerfile.
     pub images: &'a [crate::images::Image],
     /// Workloads deployed by project Tiltfiles (`project.tilt.workloads`),
     /// decorated with labels and `resource_deps`.

@@ -265,6 +265,47 @@ mod tilt_extension {
             std::fs::write(path, projects.to_string()).unwrap();
         }
 
+        /// Sets `web`'s `project.tilt` metadata in the sandbox's query output.
+        fn set_web_tilt(sandbox: &MoonWasmSandbox, tilt: serde_json::Value) {
+            let path = sandbox.path().join("projects.json");
+            let mut projects: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            let web = projects["projects"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|project| project["id"] == "web")
+                .unwrap();
+
+            web["config"]["project"] = json!({ "metadata": { "tilt": tilt } });
+            std::fs::write(path, projects.to_string()).unwrap();
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn builds_images_from_the_committed_dockerfile() {
+            let sandbox = create_moon_sandbox("query");
+            set_web_tilt(&sandbox, json!({ "image": "web" }));
+            sandbox.create_file("web/Dockerfile", "FROM scratch\n");
+            let plugin = create_plugin(&sandbox).await;
+
+            plugin.execute_extension(generate_args(&[])).await;
+
+            let image = read_generated(&sandbox, "images/web.tilt");
+
+            assert!(image.contains("\"docker build -t $EXPECTED_REF -f web/Dockerfile .\""));
+            assert!(!sandbox.path().join(".moon/cache/tilt").exists());
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        #[should_panic(expected = "moon docker file web")]
+        async fn fails_without_a_committed_dockerfile() {
+            let sandbox = create_moon_sandbox("query");
+            set_web_tilt(&sandbox, json!({ "image": "web" }));
+            let plugin = create_plugin(&sandbox).await;
+
+            plugin.execute_extension(generate_args(&[])).await;
+        }
+
         #[tokio::test(flavor = "multi_thread")]
         #[should_panic(expected = "names projects that don't exist")]
         async fn fails_for_unknown_runtime_dependencies() {

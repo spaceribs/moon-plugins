@@ -1,6 +1,7 @@
-//! Container images built from moon's generated Dockerfiles, for projects that
-//! opt in with `project.tilt.image`. The user's own Kubernetes or Compose
-//! resources deploy them by referencing the image name.
+//! Container images built from each project's committed `Dockerfile` (written
+//! by `moon docker file`, as moon recommends), for projects that opt in with
+//! `project.tilt.image`. The user's own Kubernetes or Compose resources deploy
+//! them by referencing the image name.
 //!
 //! moon's Dockerfiles copy the whole workspace and run `moon docker scaffold`,
 //! so the build context must stay the workspace root, and `docker_build(only=)`
@@ -10,13 +11,9 @@
 
 use crate::config::TiltExtensionConfig;
 use crate::query::{QueryProjectsOutput, QueryTasksOutput};
-use crate::tiltfile::path_to_root;
 use crate::watch::{expand_braces, glob_base};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-
-/// Where generated Dockerfiles are written (gitignored moon cache).
-pub const DOCKERFILE_DIR: &str = ".moon/cache/tilt";
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Image {
@@ -25,9 +22,9 @@ pub struct Image {
     /// Image name to reference in k8s YAML or compose files, used verbatim as
     /// the `custom_build` ref (registry prefixes included).
     pub image_ref: String,
-    /// Workspace-relative path of the generated Dockerfile.
+    /// Workspace-relative path of the project's committed Dockerfile.
     pub dockerfile: String,
-    /// Shell command that generates the Dockerfile and builds `$EXPECTED_REF`.
+    /// Shell command that builds `$EXPECTED_REF`.
     pub command: String,
     /// Workspace-relative paths whose changes trigger a rebuild.
     pub watch: Vec<String>,
@@ -178,8 +175,8 @@ pub struct Sync {
 }
 
 /// Plan an image for every project that opts in with `project.tilt.image`.
-/// `config_files` are the workspace-relative moon config files (the
-/// Dockerfile is generated from them).
+/// `config_files` are the workspace-relative moon config files (they decide
+/// what `moon docker scaffold` copies into the image).
 pub fn plan_images(
     projects: &QueryProjectsOutput,
     tasks: &QueryTasksOutput,
@@ -210,25 +207,25 @@ pub fn plan_images(
                 .to_owned();
 
             let closure = dependency_closure(&project.id, &by_id);
-            let (watch, ignore) = image_triggers(&closure, &by_id, tasks, config_files);
-            let dockerfile = format!("{DOCKERFILE_DIR}/{}.Dockerfile", project.id);
-
-            // `moon docker file` resolves its destination from the project root.
-            let dest = match project.source.trim_matches('/') {
-                "" | "." => dockerfile.clone(),
-                source => format!("{}/{dockerfile}", path_to_root(&format!("{source}/_"))),
-            };
-
-            let live_update = plan_live_update(project, &closure, &by_id, tasks, config, config_files);
+            let dockerfile = project_dockerfile(project);
+            let (watch, ignore) =
+                image_triggers(&closure, &by_id, tasks, config_files, &dockerfile);
+            let live_update = plan_live_update(
+                project,
+                &closure,
+                &by_id,
+                tasks,
+                config,
+                config_files,
+                &dockerfile,
+            );
 
             Some(Image {
                 project: project.id.clone(),
                 image_ref,
                 live_update,
                 command: format!(
-                    "{moon} docker file {id} {dest} --defaults && {docker} build -t $EXPECTED_REF -f {dockerfile} .",
-                    moon = config.moon_bin,
-                    id = project.id,
+                    "{docker} build -t $EXPECTED_REF -f {dockerfile} .",
                     docker = config.docker_bin,
                 ),
                 dockerfile,
@@ -237,6 +234,60 @@ pub fn plan_images(
             })
         })
         .collect()
+}
+
+/// The project's committed Dockerfile, workspace-relative: `Dockerfile` in
+/// the project root, where `moon docker file <project>` writes it.
+pub fn project_dockerfile(project: &crate::query::QueryProject) -> String {
+    match project.source.trim_matches('/') {
+        "" | "." => "Dockerfile".to_owned(),
+        source => format!("{source}/Dockerfile"),
+    }
+}
+
+/// The error for images whose project has no committed Dockerfile, so
+/// generation fails with how to write one instead of Tilt failing the build.
+pub fn missing_dockerfiles_error(
+    projects: &QueryProjectsOutput,
+    config: &TiltExtensionConfig,
+    is_file: impl Fn(&str) -> bool,
+) -> Option<String> {
+    if !config.images {
+        return None;
+    }
+
+    let missing: Vec<&str> = projects
+        .projects
+        .iter()
+        .filter(|project| {
+            project
+                .config
+                .tilt_metadata()
+                .and_then(|tilt| tilt.get("image"))
+                .is_some_and(|image| image.is_string())
+                && !is_file(&project_dockerfile(project))
+        })
+        .map(|project| project.id.as_str())
+        .collect();
+
+    if missing.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "Images are built from each project's committed <path>Dockerfile</path>, but {} {} none. Write and commit one with {}.",
+        missing
+            .iter()
+            .map(|id| format!("<id>{id}</id>"))
+            .collect::<Vec<_>>()
+            .join(", "),
+        if missing.len() == 1 { "has" } else { "have" },
+        missing
+            .iter()
+            .map(|id| format!("<shell>moon docker file {id}</shell>"))
+            .collect::<Vec<_>>()
+            .join(", "),
+    ))
 }
 
 /// Live Update for a project's image: sync the source directories of the
@@ -251,6 +302,7 @@ fn plan_live_update(
     tasks: &QueryTasksOutput,
     config: &TiltExtensionConfig,
     config_files: &[String],
+    dockerfile: &str,
 ) -> Option<LiveUpdate> {
     let tilt = project.config.tilt_metadata();
     // Malformed settings are reported by `live_update_settings_error`.
@@ -302,6 +354,10 @@ fn plan_live_update(
             fall_back_on.extend(image_input_files(task).cloned());
         }
     }
+
+    // The Dockerfile sits in the synced project directory, but a sync can't
+    // apply an edit to it.
+    fall_back_on.insert(dockerfile.to_owned());
 
     if syncs.is_empty() {
         return None;
@@ -382,8 +438,9 @@ fn image_input_files(task: &crate::query::QueryTask) -> impl Iterator<Item = &St
         .filter(|file| !file.starts_with(".moon"))
 }
 
-/// What triggers a rebuild: the closure's project directories, moon config
-/// for them (the Dockerfile is generated from it), and files their tasks take
+/// What triggers a rebuild: the project's Dockerfile, the closure's project
+/// directories, moon config for them (what `moon docker scaffold` copies
+/// depends on it), and files their tasks take
 /// as explicit inputs (lockfiles, shared configs, docs anywhere in the
 /// workspace). Task outputs are ignored:
 /// moon's Dockerfiles build inside the container, not from host artifacts.
@@ -392,8 +449,11 @@ fn image_triggers(
     by_id: &BTreeMap<&str, &crate::query::QueryProject>,
     tasks: &QueryTasksOutput,
     config_files: &[String],
+    dockerfile: &str,
 ) -> (Vec<String>, Vec<String>) {
-    let mut watch = BTreeSet::new();
+    // Usually inside the project directory, which is watched anyway, but not
+    // for the workspace root project (covered paths are dropped below).
+    let mut watch = BTreeSet::from([dockerfile.to_owned()]);
     let mut ignore = BTreeSet::new();
 
     for id in closure {
@@ -617,7 +677,7 @@ mod tests {
     }
 
     #[test]
-    fn builds_with_moons_dockerfile_and_the_whole_workspace_as_context() {
+    fn builds_from_the_committed_dockerfile_with_the_whole_workspace_as_context() {
         let (projects, tasks) = fixture();
         let images = plan_images(
             &projects,
@@ -627,10 +687,87 @@ mod tests {
         );
         let web = images.iter().find(|i| i.project == "web").unwrap();
 
-        assert_eq!(web.dockerfile, ".moon/cache/tilt/web.Dockerfile");
+        assert_eq!(web.dockerfile, "web/Dockerfile");
         assert_eq!(
             web.command,
-            "moon docker file web ../.moon/cache/tilt/web.Dockerfile --defaults && docker build -t $EXPECTED_REF -f .moon/cache/tilt/web.Dockerfile ."
+            "docker build -t $EXPECTED_REF -f web/Dockerfile ."
+        );
+    }
+
+    #[test]
+    fn editing_the_dockerfile_rebuilds_instead_of_syncing() {
+        let (projects, tasks) = fixture();
+        let images = plan_images(
+            &projects,
+            &tasks,
+            &TiltExtensionConfig::default(),
+            &config_files(),
+        );
+        let web = images.iter().find(|i| i.project == "web").unwrap();
+        let live_update = web.live_update.as_ref().unwrap();
+
+        // The Dockerfile is inside the watched, synced `web` directory, so
+        // only `fall_back_on` makes an edit rebuild.
+        assert!(web.watch.contains(&"web".to_owned()));
+        assert!(live_update.syncs.iter().any(|sync| sync.local == "web"));
+        assert!(
+            live_update
+                .fall_back_on
+                .contains(&"web/Dockerfile".to_owned())
+        );
+    }
+
+    #[test]
+    fn watches_the_workspace_root_projects_dockerfile() {
+        let (mut projects, tasks) = fixture();
+        let web = projects
+            .projects
+            .iter_mut()
+            .find(|p| p.id == "web")
+            .unwrap();
+        web.source = ".".into();
+
+        let images = plan_images(
+            &projects,
+            &tasks,
+            &TiltExtensionConfig::default(),
+            &config_files(),
+        );
+        let web = images.iter().find(|i| i.project == "web").unwrap();
+
+        assert_eq!(web.dockerfile, "Dockerfile");
+        assert!(web.watch.contains(&"Dockerfile".to_owned()));
+    }
+
+    #[test]
+    fn reports_projects_without_a_committed_dockerfile() {
+        let (projects, _) = fixture();
+        let config = TiltExtensionConfig::default();
+
+        assert_eq!(
+            missing_dockerfiles_error(&projects, &config, |_| true),
+            None
+        );
+        assert_eq!(
+            missing_dockerfiles_error(&projects, &config, |path| path == "api/Dockerfile").unwrap(),
+            "Images are built from each project's committed <path>Dockerfile</path>, but <id>web</id> has none. \
+             Write and commit one with <shell>moon docker file web</shell>."
+        );
+        assert!(
+            missing_dockerfiles_error(&projects, &config, |_| false)
+                .unwrap()
+                .contains("<id>api</id>, <id>web</id> have none")
+        );
+
+        // Nothing to build without images.
+        let config = TiltExtensionConfig {
+            images: false,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            missing_dockerfiles_error(&projects, &config, |_| false),
+            None
         );
     }
 
