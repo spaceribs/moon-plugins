@@ -38,6 +38,13 @@ With `sync` enabled (default), the extension SHALL regenerate the file during mo
 - **WHEN** moon syncs and the regenerated contents equal the existing file
 - **THEN** the file is not rewritten, so a running Tilt doesn't reload
 
+### Requirement: Not regenerated inside images
+The extension SHALL skip workspace sync, generating nothing and recording no operation, when the workspace root has a `dockerManifest.json`, which `moon docker scaffold` writes to the pruned workspace it copies into images. That workspace holds only the image's project and its dependencies, so generation there would fail on other projects' missing Dockerfiles, and nothing in the image reads the output.
+
+#### Scenario: Start task in an image
+- **WHEN** an image's start task runs `moon run`, which syncs the workspace first, in a workspace with `dockerManifest.json` at its root
+- **THEN** the sync is reported as skipped, with no error and no files written
+
 ### Requirement: Sync failures don't block moon
 A failure while syncing SHALL be recorded on the sync operation and reported, and MUST NOT fail `moon run`, except where moon's host aborts the call (a bare `moonBin` that isn't on `PATH`).
 

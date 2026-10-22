@@ -45,6 +45,10 @@ The extension runs the binary this toolchain installed, whatever `tilt` is on yo
 
 moon and the extension don't need a `tilt` plugin in `.prototools`. If you register one, for example to run `tilt` through proto's shims in your shell, it only affects your shell. moon's tasks and the extension use this toolchain's bundled plugin. Both install into `~/.proto/tools/tilt/<version>`, so they share installs. On proto 0.63 or newer, a `.prototools` that registers plugins must be trusted with `proto trust`, or the shims refuse to load it.
 
+## In container images
+
+moon loads every toolchain configured in `.moon/toolchains.*` whenever it runs, including inside images built from `moon docker file`, where no Tilt runs. In a container capped at 1 CPU, loading this plugin took about 4.5 seconds of each cold `moon run` start. That's moon behaviour and this plugin can't skip it. In image-heavy workspaces, allow for it in liveness probes. Setting `MOON_SKIP_SYNC_WORKSPACE=true` in the image's start stage at least avoids loading the Tilt extension there too (see the extension's [Plugins inside the image build](../../extensions/tilt/README.md#plugins-inside-the-image-build)).
+
 ## Configuration
 
 | Setting | Default | Description |
