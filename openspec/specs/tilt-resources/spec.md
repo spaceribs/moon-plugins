@@ -5,7 +5,7 @@ How the Tilt extension turns moon tasks into Tilt resources: which tasks are exp
 
 ## Requirements
 
-### Requirement: Task selection by tag
+### Requirement: Task exposure by tag
 The extension SHALL expose a task as a Tilt resource when the task has the configured tag (default `tilt`), or when it is a persistent task in a project that has the tag. With `includePersistent: true`, it SHALL expose every persistent task regardless of tags.
 
 #### Scenario: Tagged project exposes its persistent tasks
@@ -37,7 +37,7 @@ The extension MUST NOT expose interactive tasks, tasks that run Tilt itself (com
 - **WHEN** task `notify` depends on `tilt-open`, which depends on `tilt-up`, which runs Tilt
 - **THEN** `notify` is not a resource either, and the generated Tiltfile names it as excluded because it depends on `tilt-open`
 
-#### Scenario: Excluded task nothing would select
+#### Scenario: Excluded task nothing would expose
 - **WHEN** an untagged project has a persistent task that depends on its task running `tilt up`, and `includePersistent` is off
 - **THEN** the generated Tiltfile doesn't name it
 

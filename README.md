@@ -19,7 +19,7 @@ tilt:
   # plugin: "github://spaceribs/moon-plugins/tilt_extension@tilt_extension-v0.1.0"       # pinned (full release tag)
 ```
 
-Each plugin's README covers setup: start with the [Tilt extension's quick start](./extensions/tilt#quick-start).
+Each plugin's README covers setup: start with the [Tilt extension's quick start](./extensions/tilt#quick-start). The [glossary](./GLOSSARY.md) separates moon's, Tilt's, and the extension's terms.
 
 **Supported platforms:** Linux, macOS, and Windows (x64), all tested in CI. The extension's container image builds need Linux or macOS, which includes Windows through WSL2.
 

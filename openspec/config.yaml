@@ -12,6 +12,11 @@ context: |
   Commits follow Conventional Commits: they drive release-plz versions and
   changelogs, so a change's commits must use the right type and scope.
   New behavior that could surprise existing users must be opt-in.
+  Terminology follows GLOSSARY.md, which splits terms into moon's, Tilt's,
+  and the extension's own: use each term in its owner's meaning, qualify
+  homonyms (resource, sync, extension, service, deps, args), say "expose"
+  for tasks and "select" for projects, and add any new extension term to
+  the glossary in the same change.
 
 # Project context (optional)
 # Add only constraints that should guide OpenSpec artifacts and workflows.
