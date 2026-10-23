@@ -91,8 +91,42 @@ A button whose `project.tilt.buttons.<task>.argv` is set SHALL pass those argume
 - **WHEN** `api:db-flush` is also tagged `tilt-confirm`
 - **THEN** its button's command is `moon ext tilt -- exec api:db-flush --yes -- --noinput`
 
+### Requirement: Button environment variables
+A button whose `project.tilt.buttons.<task>.env` is set SHALL run its task with those environment variables set, for the task and every task dependency moon runs with it, wherever the task runs. They SHALL appear in the button's command in the generated Tiltfile. Running the task any other way, such as `moon run` on the host, MUST NOT receive them.
+
+#### Scenario: Non-interactive dependency
+- **WHEN** `api:seed` has `deps: ["db-flush"]`, `db-flush` runs `python manage.py flush $FLUSH_FLAGS`, `project.tilt.buttons.seed.env` is `{ FLUSH_FLAGS: "--noinput" }`, and the user clicks the `api:seed` button
+- **THEN** `db-flush` runs with `FLUSH_FLAGS` set to `--noinput`, and doesn't prompt
+
+#### Scenario: Host run keeps prompting
+- **WHEN** the user runs `moon run api:seed` on the host
+- **THEN** `FLUSH_FLAGS` is unset, and `db-flush` prompts as before
+
+#### Scenario: Visible in the command
+- **WHEN** `project.tilt.buttons.seed` is `{ env: { FLUSH_FLAGS: "--noinput", LOG: "1" }, argv: ["--quick"] }` and `api:seed` is tagged `tilt-confirm`
+- **THEN** its button's command is `moon ext tilt -- exec api:seed --yes --env FLUSH_FLAGS=--noinput --env LOG=1 -- --quick`
+
+### Requirement: exec sets environment variables
+`moon ext tilt -- exec <target> --env KEY=VALUE`, repeatable, SHALL run the task with each variable set in its environment: in the running pod of a Kubernetes workload, in a Compose service's container, or in the process environment on the host. It MUST NOT change the environment of anything else running in the workload. It SHALL fail without running the task, naming the flag's value, when a value has no `=` or its name isn't valid.
+
+#### Scenario: Kubernetes workload
+- **WHEN** the user runs `moon ext tilt -- exec api:seed --env FLUSH_FLAGS=--noinput` and `api` runs as a Kubernetes workload
+- **THEN** `moon run api:seed` runs in a running pod of `api` with `FLUSH_FLAGS` set to `--noinput`
+
+#### Scenario: Compose service
+- **WHEN** `api` runs as a Compose service
+- **THEN** `moon run api:seed` runs in the service's container with `FLUSH_FLAGS` set to `--noinput`
+
+#### Scenario: Host project
+- **WHEN** `web` declares no workloads and the user runs `moon ext tilt -- exec web:seed --env FLUSH_FLAGS=--noinput`
+- **THEN** `moon run web:seed` runs on the host with `FLUSH_FLAGS` set to `--noinput`
+
+#### Scenario: Malformed variable
+- **WHEN** the user runs `moon ext tilt -- exec web:seed --env FLUSH_FLAGS`
+- **THEN** the command fails without running the task, naming `FLUSH_FLAGS`
+
 ### Requirement: Confirmation is declared on the task
-A task tagged with `confirmTag` (default `tilt-confirm`) SHALL get a button that requires confirmation in Tilt's UI. `exec` SHALL refuse to run such a task unless given `--yes`, with an error naming the task and the flag, and its buttons SHALL pass `--yes` once Tilt has confirmed.
+A task tagged with `confirmTag` (default `tilt-confirm`), or depending on one directly or through other task dependencies, SHALL get a button that requires confirmation in Tilt's UI. `exec` SHALL refuse to run such a task unless given `--yes`, with an error naming the task, the tagged task when it's a dependency, and the flag, and its buttons SHALL pass `--yes` once Tilt has confirmed.
 
 #### Scenario: Destructive task from a script
 - **WHEN** `api:db-reset` is tagged `tilt-exec` and `tilt-confirm`, and an agent runs `moon ext tilt -- exec api:db-reset`
@@ -106,6 +140,14 @@ A task tagged with `confirmTag` (default `tilt-confirm`) SHALL get a button that
 - **WHEN** a task is tagged `tilt-confirm` but not `tilt-exec`
 - **THEN** it gets no button, and `exec` still requires `--yes` for it
 
+#### Scenario: Destructive dependency
+- **WHEN** `api:seed` is tagged `tilt-exec` but not `tilt-confirm`, and has `deps: ["db-flush"]`, where `api:db-flush` is tagged `tilt-confirm`
+- **THEN** the `api:seed` button requires confirmation and passes `--yes`, and `moon ext tilt -- exec api:seed` without `--yes` fails without running anything, naming `api:seed`, `api:db-flush`, and `--yes`
+
+#### Scenario: Destructive dependency of a dependency
+- **WHEN** `api:seed` depends on `api:prepare`, which depends on `db:flush`, tagged `tilt-confirm`
+- **THEN** the `api:seed` button requires confirmation, naming `db:flush` when `exec` refuses it
+
 ### Requirement: Button text and icon
 A button's label SHALL be `project.tilt.buttons.<task>.text`, else the task's `description`, else the task ID. `project.tilt.buttons.<task>.icon` SHALL set its Material icon.
 
@@ -118,7 +160,7 @@ A button's label SHALL be `project.tilt.buttons.<task>.text`, else the task's `d
 - **THEN** the button is labelled `Migrate` with the `storage` icon
 
 ### Requirement: Invalid button settings fail generation
-Generation SHALL fail, naming the project and the setting, when `project.tilt.buttons` isn't an object of objects, an entry has a key other than `text`, `icon`, `args`, or `argv`, a `text`, `icon`, or `args` value isn't a non-empty string, an `argv` value isn't a non-empty list of strings, or an entry names a task the project doesn't have or that isn't tagged with `execTag`.
+Generation SHALL fail, naming the project and the setting, when `project.tilt.buttons` isn't an object of objects, an entry has a key other than `text`, `icon`, `args`, `argv`, or `env`, a value breaks the rules for button setting values, or an entry names a task the project doesn't have or that isn't tagged with `execTag`.
 
 #### Scenario: Settings for an untagged task
 - **WHEN** `project.tilt.buttons.db-migrate` is set but `api:db-migrate` isn't tagged `tilt-exec`
@@ -128,12 +170,23 @@ Generation SHALL fail, naming the project and the setting, when `project.tilt.bu
 - **WHEN** `project.tilt.buttons.db-migrate` is `{ confirm: true }`
 - **THEN** generation fails, naming `api` and `confirm`
 
+### Requirement: Button setting values
+In `project.tilt.buttons.<task>`, `text`, `icon`, and `args` SHALL be non-empty strings, `argv` a non-empty list of strings, and `env` a non-empty object of strings whose names are letters, digits, and underscores, not starting with a digit, and not `MOON_TILT_ARGS`. Any other value fails generation.
+
 #### Scenario: Fixed arguments as a string
 - **WHEN** `project.tilt.buttons.db-flush.argv` is `"--noinput"`
 - **THEN** generation fails, naming `api` and `db-flush.argv`
 
+#### Scenario: Invalid variable name
+- **WHEN** `project.tilt.buttons.seed.env` is `{ "FLUSH-FLAGS": "--noinput" }`
+- **THEN** generation fails, naming `api` and `seed.env.FLUSH-FLAGS`
+
+#### Scenario: Variable the input owns
+- **WHEN** `project.tilt.buttons.seed.env` is `{ MOON_TILT_ARGS: "--plan" }`
+- **THEN** generation fails, naming `api` and `seed.env.MOON_TILT_ARGS`
+
 ### Requirement: Buttons are a template section
-Buttons SHALL be rendered by their own section template, overridable like the others, with each button's target, project, label, icon, resource (or none, for the navigation bar), confirmation, args label, fixed arguments, and command available to it.
+Buttons SHALL be rendered by their own section template, overridable like the others, with each button's target, project, label, icon, resource (or none, for the navigation bar), confirmation, args label, fixed arguments, environment variables, and command available to it.
 
 #### Scenario: Overriding the buttons section
 - **WHEN** `templateDir/buttons.tera` extends `moon/sections/buttons.tera` and overrides its `footer` block
