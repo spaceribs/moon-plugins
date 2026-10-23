@@ -26,7 +26,7 @@ pub struct Exec {
 }
 
 /// Resolve `target` (`<project>:<task>`) to where it runs, refusing tasks
-/// tagged `confirmTag` without `yes`.
+/// tagged `confirmTag`, or depending on one, without `yes`.
 pub fn resolve(
     projects: &QueryProjectsOutput,
     tasks: &QueryTasksOutput,
@@ -55,11 +55,22 @@ pub fn resolve(
         ));
     };
 
-    if task.tags.contains(&config.confirm_tag) && !yes {
-        return Err(format!(
-            "<id>{}</id> is tagged <id>{}</id> (destructive): pass <shell>--yes</shell> to run it",
-            task.target, config.confirm_tag
-        ));
+    if !yes {
+        match confirmed_task(tasks, &task.target, &config.confirm_tag) {
+            Some(confirmed) if confirmed == task.target => {
+                return Err(format!(
+                    "<id>{}</id> is tagged <id>{}</id> (destructive): pass <shell>--yes</shell> to run it",
+                    task.target, config.confirm_tag
+                ));
+            }
+            Some(confirmed) => {
+                return Err(format!(
+                    "<id>{}</id> runs <id>{confirmed}</id>, tagged <id>{}</id> (destructive): pass <shell>--yes</shell> to run it",
+                    task.target, config.confirm_tag
+                ));
+            }
+            None => {}
+        }
     }
 
     let workloads = declared_workloads(project);
@@ -132,6 +143,36 @@ pub fn task_args(mut args: Vec<String>, input: Option<&str>) -> Result<Vec<Strin
     }
 
     Ok(args)
+}
+
+/// The task `moon run <target>` runs that's tagged `tag`, if any: `target`
+/// itself, else the first in a depth-first walk of its task dependencies, in
+/// declared order. Targets missing from `tasks` are skipped (moon fails on
+/// them anyway), and each task is visited once.
+pub fn confirmed_task(tasks: &QueryTasksOutput, target: &str, tag: &str) -> Option<String> {
+    fn find(
+        tasks: &QueryTasksOutput,
+        target: &str,
+        tag: &str,
+        visited: &mut std::collections::BTreeSet<String>,
+    ) -> Option<String> {
+        if !visited.insert(target.to_owned()) {
+            return None;
+        }
+
+        let (project, id) = target.split_once(':')?;
+        let task = tasks.tasks.get(project)?.get(id)?;
+
+        if task.tags.iter().any(|t| t == tag) {
+            return Some(task.target.clone());
+        }
+
+        task.deps
+            .iter()
+            .find_map(|dep| find(tasks, &dep.target, tag, visited))
+    }
+
+    find(tasks, target, tag, &mut Default::default())
 }
 
 /// `moon run` arguments for `target`, with `args` passed after `--`.
@@ -421,6 +462,73 @@ mod tests {
             "<id>web:lint</id> is tagged <id>tilt-confirm</id> (destructive): pass <shell>--yes</shell> to run it"
         );
         assert!(resolve_target(&projects, &tasks, "web:lint", true).is_ok());
+    }
+
+    /// Adds `project:id` to `tasks`, with `deps` and `tags`.
+    fn add_task(tasks: &mut QueryTasksOutput, target: &str, deps: &[&str], tags: &[&str]) {
+        let (project, id) = target.split_once(':').unwrap();
+
+        tasks.tasks.entry(project.into()).or_default().insert(
+            id.into(),
+            crate::query::QueryTask {
+                target: target.into(),
+                deps: deps
+                    .iter()
+                    .map(|dep| crate::query::QueryTaskDep {
+                        target: dep.to_string(),
+                        ..Default::default()
+                    })
+                    .collect(),
+                tags: strings(tags),
+                ..Default::default()
+            },
+        );
+    }
+
+    #[test]
+    fn finds_confirmed_tasks_among_dependencies() {
+        let (_, mut tasks) = fixture();
+
+        add_task(&mut tasks, "api:seed", &["api:prepare", "api:migrate"], &[]);
+        add_task(&mut tasks, "api:migrate", &[], &[]);
+        add_task(&mut tasks, "api:prepare", &["web:nope", "db:flush"], &[]);
+        add_task(&mut tasks, "db:flush", &["api:seed"], &["tilt-confirm"]);
+
+        assert_eq!(confirmed_task(&tasks, "api:migrate", "tilt-confirm"), None);
+        assert_eq!(
+            confirmed_task(&tasks, "db:flush", "tilt-confirm").as_deref(),
+            Some("db:flush")
+        );
+        // A dependency of a dependency, past an unknown target, with a cycle
+        // back to the start.
+        assert_eq!(
+            confirmed_task(&tasks, "api:seed", "tilt-confirm").as_deref(),
+            Some("db:flush")
+        );
+
+        // A cycle without a confirmed task ends.
+        add_task(&mut tasks, "db:flush", &["api:seed"], &[]);
+        assert_eq!(confirmed_task(&tasks, "api:seed", "tilt-confirm"), None);
+    }
+
+    #[test]
+    fn tasks_with_confirmed_dependencies_need_yes() {
+        let (projects, mut tasks) = fixture();
+
+        // web:dev depends on web:codegen.
+        tasks
+            .tasks
+            .get_mut("web")
+            .unwrap()
+            .get_mut("codegen")
+            .unwrap()
+            .tags = vec!["tilt-confirm".into()];
+
+        assert_eq!(
+            resolve_target(&projects, &tasks, "web:dev", false).unwrap_err(),
+            "<id>web:dev</id> runs <id>web:codegen</id>, tagged <id>tilt-confirm</id> (destructive): pass <shell>--yes</shell> to run it"
+        );
+        assert!(resolve_target(&projects, &tasks, "web:dev", true).is_ok());
     }
 
     #[test]

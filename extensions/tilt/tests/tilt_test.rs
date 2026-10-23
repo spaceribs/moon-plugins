@@ -641,8 +641,8 @@ mod tilt_extension {
             ENV.lock().await
         }
 
-        /// A sandbox whose `api` has tasks `fail` (the fake moon fails it) and
-        /// `reset` (tagged `tilt-confirm`).
+        /// A sandbox whose `api` has tasks `fail` (the fake moon fails it),
+        /// `reset` (tagged `tilt-confirm`), and `seed` (depending on `reset`).
         async fn create_plugin(sandbox: &MoonWasmSandbox) -> ExtensionTestWrapper {
             create_fake_moon(sandbox);
 
@@ -653,6 +653,7 @@ mod tilt_extension {
             tasks["tasks"]["api"]["fail"] =
                 json!({ "id": "fail", "target": "api:fail", "command": "false" });
             tasks["tasks"]["api"]["reset"] = json!({ "id": "reset", "target": "api:reset", "command": "reset", "tags": ["tilt-confirm"] });
+            tasks["tasks"]["api"]["seed"] = json!({ "id": "seed", "target": "api:seed", "command": "seed", "deps": [{ "target": "api:reset" }] });
             std::fs::write(path, tasks.to_string()).unwrap();
 
             sandbox
@@ -723,6 +724,31 @@ mod tilt_extension {
                 .await;
 
             assert_eq!(ran(&sandbox), "run api:reset");
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        #[should_panic(
+            expected = "api:seed runs api:reset, tagged tilt-confirm (destructive): pass --yes to run it"
+        )]
+        async fn refuses_tasks_with_confirmed_dependencies_without_yes() {
+            let _env = env_lock().await;
+            let sandbox = create_moon_sandbox("query");
+            let plugin = create_plugin(&sandbox).await;
+
+            plugin.execute_extension(exec_args(&["api:seed"])).await;
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn runs_tasks_with_confirmed_dependencies_with_yes() {
+            let _env = env_lock().await;
+            let sandbox = create_moon_sandbox("query");
+            let plugin = create_plugin(&sandbox).await;
+
+            plugin
+                .execute_extension(exec_args(&["api:seed", "--yes"]))
+                .await;
+
+            assert_eq!(ran(&sandbox), "run api:seed");
         }
 
         #[tokio::test(flavor = "multi_thread")]

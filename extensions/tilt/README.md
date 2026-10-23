@@ -317,6 +317,7 @@ Both buttons appear on the `api` resource. `Apply database migrations` runs `moo
 - **How:** each button runs [`moon ext tilt -- exec <project>:<task>`](#running-a-task-where-tilt-runs-it), which asks the running Tilt where the workload is when you click. Renamed resources, Helm releases, and namespaces all work, and no shell is involved, so buttons work on Windows too.
 - **Label:** `buttons.<task>.text`, else the task's `description`, else its ID. `icon` is a [Material icon](https://fonts.google.com/icons) name.
 - **Confirmation lives on the task**, so `moon query tasks` shows which tasks are destructive. `exec` refuses a `tilt-confirm` task without `--yes`, so scripts and agents get the same safeguard as Tilt's UI.
+- **Confirmation covers task dependencies.** A button for a task that depends on a `tilt-confirm` task, directly or through other dependencies, asks first too, and `exec` needs `--yes` for it, naming the tagged dependency. `moon run` runs the dependency either way, so tagging the task that does the damage is enough.
 - **Fixed arguments:** `buttons.<task>.argv` is a list of arguments the button always passes after `--`, ahead of anything typed into its `args` input. They're part of the button's command in the generated Tiltfile, and only the button passes them.
 - **Environment variables:** `buttons.<task>.env` sets variables for the button's run only, for the task and every task dependency moon runs with it (see below).
 - **For one-off tasks.** Buttons run without a terminal, so a task that waits for input fails (give it `argv` such as `["--noinput"]`, or `env` when the prompt is in a dependency), and a persistent task runs until you stop it.
@@ -337,14 +338,16 @@ tasks:
     tags: ["tilt-exec"]
   db-flush:
     command: "python manage.py flush $FLUSH_FLAGS"
+    tags: ["tilt-confirm"]
     options:
       cache: false
 ```
 
-The `seed` button runs `moon ext tilt -- exec api:seed --env FLUSH_FLAGS=--noinput`, so `db-flush` gets `--noinput`. `moon run api:seed` on the host leaves `FLUSH_FLAGS` unset, which moon's shell expands to nothing, so the flush still prompts there.
+`db-flush` is tagged `tilt-confirm`, so the `seed` button asks first. Once you confirm, it runs `moon ext tilt -- exec api:seed --yes --env FLUSH_FLAGS=--noinput`, so `db-flush` gets `--noinput`. Without the tag, one click would flush the database without asking: tag any task whose prompt a variable turns off. `moon run api:seed` on the host leaves `FLUSH_FLAGS` unset, which moon's shell expands to nothing, so the flush still prompts there.
 
 - **Turn caching off** (`options: { cache: false }`) for tasks whose behavior a variable changes, or list the variable as an input (`inputs: ["$FLUSH_FLAGS"]`). moon doesn't hash inherited variables, so a cached task replays its last output instead of running.
-- **Precedence:** the button's variable wins over the same variable in the task's own `env`, since moon gives inherited variables precedence.
+- **Precedence:** the button's variable wins over the same variable in the task's own `env`, since moon gives inherited variables precedence. That includes task dependencies in other projects (`deps: ["db:flush"]`): a button in `api` can override a variable `db/moon.yml` sets, so review a button's `env` with the tasks it reaches.
+- **Not for secrets.** Values are stored in `moon.yml` and the generated Tiltfile, printed in Tilt's log with the button's command, and visible to `ps` on the host. Use `env` for flags and switches, and get credentials into the workload the way it already gets them.
 - **Names** are letters, digits, and underscores, not starting with a digit. `MOON_TILT_ARGS` is reserved for the button's input.
 - **On Windows hosts**, moon's default shell isn't POSIX, so `$FLUSH_FLAGS` doesn't expand the same way in a host task's command. The variable is still set.
 
@@ -357,7 +360,7 @@ The `seed` button runs `moon ext tilt -- exec api:seed --env FLUSH_FLAGS=--noinp
 ```sh
 moon ext tilt -- exec api:db-migrate                 # in a running pod of api's first workload
 moon ext tilt -- exec api:db-migrate -- --noinput    # args after -- go to the task
-moon ext tilt -- exec api:db-reset --yes             # required for tasks tagged tilt-confirm
+moon ext tilt -- exec api:db-reset --yes             # required for tasks tagged tilt-confirm, or depending on one
 moon ext tilt -- exec api:seed --env FLUSH_FLAGS=--noinput   # for the task and its task dependencies
 ```
 
@@ -414,6 +417,7 @@ The output is regenerated during moon's **workspace sync**: on `moon sync`, and 
 - `moon ext tilt -- generate --check` fails, naming the files, when any generated file is out of date, missing, or no longer produced.
 - Generating doesn't mean Tilt can load the result: a `workloads` name that no Tiltfile deploys only fails when Tilt loads it, with `k8s_resource specified unknown resource`. `moon ext tilt -- generate --load` generates, then loads the main `Tiltfile` the way `tilt up` does (with `tilt alpha tiltfile-result`), without a cluster or a running Tilt. It prints nothing from Tilt when the Tiltfile loads, and fails with Tilt's error when it doesn't. Run it in CI to catch these before anyone runs `tilt up`. With `--check`, it loads only output that's already current, and writes nothing.
   - Loading runs what your Tiltfiles run at load time, as `tilt up` does: `local()` calls (including the main `Tiltfile`'s `moon ext tilt -- generate`), `docker compose config` for `docker_compose()`, Helm for `helm()`, and fetching `ext://` Tilt extensions from GitHub. So CI needs those tools and network access. It needs `tilt` too: `tiltBin`, or the `tilt` toolchain's binary.
+  - Because it executes the Tiltfiles, `--load` runs code from the change being checked, like any build step. For changes you don't trust, such as pull requests from forks, run it in a job without secrets and with `KUBECONFIG` pointing at an empty file, so a `local()` call can't reach credentials or a cluster.
 - Project Tiltfiles are evaluated relative to their own directory, as with any Tilt `include()`. Resource names must be unique across the whole workspace.
 - On macOS, `cd` into the workspace with its exact directory casing. A mismatch (e.g. `~/projects` when the folder is `~/Projects`) breaks Tilt's ignore patterns ([tilt#5271](https://github.com/tilt-dev/tilt/issues/5271)).
 
