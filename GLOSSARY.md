@@ -146,6 +146,7 @@ Terms this repo introduced. Where a term reuses a moon or Tilt word, it's narrow
 | **exec** | `moon ext tilt -- exec <target>`: `moon run` the task where its project runs, inside its first declared workload (`kubectl exec`/`docker exec`), or on the host. |
 | **button args** | `project.tilt.buttons.<task>.args`, the label of a button's text input. Its value reaches `exec` as `MOON_TILT_ARGS` and goes to the task after `--`, after any button argv. |
 | **button argv** | `project.tilt.buttons.<task>.argv`, fixed arguments a button always passes to its task after `--`. Only part of Tilt's `cmd_button` `argv`, which is the button's whole command. |
+| **button env** | `project.tilt.buttons.<task>.env`, environment variables set only for a button's run, for its task and the task dependencies moon runs with it. Passed to `exec` as `--env KEY=VALUE`. |
 
 ### Generated files
 

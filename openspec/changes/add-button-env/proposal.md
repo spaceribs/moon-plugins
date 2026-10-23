@@ -24,9 +24,8 @@ None.
 ## Impact
 
 - **Code**: `extensions/tilt/src/buttons.rs` (setting, validation, command), `exec.rs` (the flag, and the variables in the `kubectl`, `docker`, and host commands), `tilt_ext.rs` (the flag), the README's exec-buttons, exec, project-settings, and template-variables sections, and `GLOSSARY.md` (button env).
-- **Behavior**: opt-in. Buttons without `env` and `exec` without `--env` run exactly as before. Released as `feat(tilt)` (minor).
+- **Behavior**: opt-in. Buttons without `env` and `exec` without `--env` run exactly as before. Released as `feat(tilt)` (minor). moon gives inherited variables precedence over a task's own `env` in `moon.yml` (checked with moon 2.6.2), so a button's variable also wins over one the task declares.
 - **Dependencies**: on Kubernetes, the variables are set with `env`, so the workload's container needs an `env` executable, as any image with a POSIX shell has.
 - **Out of scope**:
   - per-variable text inputs (the one `args` input covers free-form values)
-  - a task's own `env` in `moon.yml` keeps its precedence over inherited variables, as moon decides
   - Windows host shells, where moon's default shell isn't POSIX and `$KEY` doesn't expand the same way (the README notes it)
