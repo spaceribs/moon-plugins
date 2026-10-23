@@ -66,6 +66,25 @@ With `watchConfig` enabled (default), the generated output SHALL define a `(moon
 - **WHEN** a task was added since the output was last generated
 - **THEN** `generate --check` exits with an error naming `resources.tilt`
 
+### Requirement: Load check
+`moon ext tilt -- generate --load` SHALL load the main Tiltfile as Tilt does, without a cluster or a running Tilt, after generating. When it loads, the command SHALL succeed without printing Tilt's evaluation result. When it doesn't, the command SHALL fail with Tilt's error. With `--check`, it SHALL load only when the output is current, writing nothing.
+
+#### Scenario: Workload no Tiltfile deploys
+- **WHEN** `api` declares `workloads: { k8s: ["api"] }` but no Tiltfile deploys an `api` resource, and CI runs `moon ext tilt -- generate --load`
+- **THEN** the command fails with Tilt's `k8s_resource specified unknown resource "api"` error, without connecting to a cluster
+
+#### Scenario: Tiltfile loads
+- **WHEN** every declared workload is deployed and CI runs `moon ext tilt -- generate --load`
+- **THEN** the command succeeds and prints no JSON
+
+#### Scenario: Stale output with check
+- **WHEN** a task was added since the output was last generated, and CI runs `moon ext tilt -- generate --check --load`
+- **THEN** the command fails naming `resources.tilt`, without loading or writing anything
+
+#### Scenario: Tilt missing
+- **WHEN** neither `tiltBin` nor the Tilt toolchain's binary is available
+- **THEN** `generate --load` fails with an error naming the missing binary
+
 ### Requirement: The output directory ignores and prunes itself
 The extension SHALL write a `.gitignore` containing `*` into `outputDir`, and SHALL delete files there that it generated earlier but no longer produces. It MUST NOT delete files without the generated header.
 
