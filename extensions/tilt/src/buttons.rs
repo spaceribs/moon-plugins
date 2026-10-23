@@ -34,8 +34,10 @@ pub struct Button {
     pub args: Option<String>,
     /// Name of that input, the environment variable `exec` reads.
     pub args_env: &'static str,
+    /// Fixed arguments passed to the task after `--`, ahead of the input's.
+    pub argv: Vec<String>,
     /// What the button runs: `moon ext tilt -- exec <target>`, with `--yes`
-    /// once Tilt has confirmed.
+    /// once Tilt has confirmed, then `-- <argv>`.
     pub command: Vec<String>,
 }
 
@@ -85,6 +87,13 @@ pub fn plan_buttons(
                 command.push("--yes".into());
             }
 
+            let argv = settings.argv.unwrap_or_default();
+
+            if !argv.is_empty() {
+                command.push("--".into());
+                command.extend(argv.iter().cloned());
+            }
+
             buttons.push(Button {
                 target: task.target.clone(),
                 project: project.id.clone(),
@@ -101,6 +110,7 @@ pub fn plan_buttons(
                 confirm,
                 args: settings.args,
                 args_env: ARGS_ENV,
+                argv,
                 command,
             });
         }
@@ -119,6 +129,8 @@ pub struct ButtonSettings {
     pub icon: Option<String>,
     /// Label of a text input whose value is passed to the task after `--`.
     pub args: Option<String>,
+    /// Fixed arguments passed to the task after `--`, ahead of the input's.
+    pub argv: Option<Vec<String>>,
 }
 
 /// A project's `project.tilt.buttons`, by task ID. Errors name the entry.
@@ -161,6 +173,12 @@ fn parse_buttons(project: &QueryProject) -> Result<BTreeMap<String, ButtonSettin
                     "<property>{task}.{key}</property> must be a non-empty string"
                 ));
             }
+        }
+
+        if settings.argv.as_ref().is_some_and(Vec::is_empty) {
+            errors.push(format!(
+                "<property>{task}.argv</property> must be a non-empty list of strings"
+            ));
         }
 
         buttons.insert(task.clone(), settings);
@@ -314,6 +332,7 @@ mod tests {
                 confirm: false,
                 args: None,
                 args_env: ARGS_ENV,
+                argv: vec![],
                 command: ["moon", "ext", "tilt", "--", "exec", "web:lint"]
                     .map(String::from)
                     .into(),
@@ -393,13 +412,52 @@ mod tests {
     }
 
     #[test]
+    fn fixed_argv_follows_the_target_and_confirmation() {
+        let (mut projects, mut tasks) = fixture();
+
+        tag(&mut tasks, "web", "lint", &["tilt-exec"]);
+        tag(&mut tasks, "web", "codegen", &["tilt-exec", "tilt-confirm"]);
+        set_tilt(
+            &mut projects,
+            "web",
+            r#"{ "buttons": { "lint": { "argv": ["--noinput", ""] }, "codegen": { "argv": ["--noinput"], "args": "Flags" } } }"#,
+        );
+        let buttons = planned(&projects, &tasks);
+        let command = |target: &str| {
+            buttons
+                .iter()
+                .find(|button| button.target == target)
+                .unwrap()
+                .command
+                .join(" ")
+        };
+
+        assert_eq!(
+            command("web:lint"),
+            "moon ext tilt -- exec web:lint -- --noinput "
+        );
+        assert_eq!(
+            command("web:codegen"),
+            "moon ext tilt -- exec web:codegen --yes -- --noinput"
+        );
+        assert_eq!(
+            buttons
+                .iter()
+                .find(|button| button.target == "web:codegen")
+                .unwrap()
+                .argv,
+            ["--noinput"]
+        );
+    }
+
+    #[test]
     fn readme_example() {
         let (mut projects, mut tasks) = fixture();
 
         set_tilt(
             &mut projects,
             "api",
-            r#"{ "workloads": { "k8s": ["api"] }, "buttons": { "db-migrate": { "icon": "storage", "args": "Flags" } } }"#,
+            r#"{ "workloads": { "k8s": ["api"] }, "buttons": { "db-migrate": { "icon": "storage", "args": "Flags" }, "db-reset": { "argv": ["--noinput"] } } }"#,
         );
         let api = tasks.tasks.get_mut("api").unwrap();
 
@@ -454,6 +512,10 @@ mod tests {
                 ("db-reset", Some("api"), None, None, true),
             ]
         );
+        assert_eq!(
+            buttons[1].command.join(" "),
+            "moon ext tilt -- exec api:db-reset --yes -- --noinput"
+        );
     }
 
     #[test]
@@ -469,6 +531,7 @@ mod tests {
                 text: Some("Build".into()),
                 icon: Some("build".into()),
                 args: Some("Flags".into()),
+                argv: None,
             }
         );
         assert_eq!(
@@ -506,6 +569,27 @@ mod tests {
         assert!(
             error.contains("<property>build</property>: invalid type: integer"),
             "{error}"
+        );
+
+        let error = errors(r#"{ "build": { "argv": "--noinput" } }"#).unwrap();
+        assert!(
+            error.contains("<property>build</property>: invalid type: string \"--noinput\", expected a sequence"),
+            "{error}"
+        );
+
+        let error = errors(r#"{ "build": { "argv": ["--noinput", 5] } }"#).unwrap();
+        assert!(
+            error.contains("<property>build</property>: invalid type: integer"),
+            "{error}"
+        );
+
+        assert_eq!(
+            errors(r#"{ "build": { "argv": [] } }"#).unwrap(),
+            "<property>project.tilt.buttons</property> of <id>api</id> <property>build.argv</property> must be a non-empty list of strings"
+        );
+        assert_eq!(
+            errors(r#"{ "build": { "argv": ["--noinput", ""] } }"#),
+            None
         );
 
         assert_eq!(

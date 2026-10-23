@@ -115,8 +115,8 @@ pub enum TiltCommand {
         #[arg(long)]
         yes: bool,
 
-        /// Arguments for the task, after `--`. Without them, the value of
-        /// `MOON_TILT_ARGS` (a button's input) is split into arguments.
+        /// Arguments for the task, after `--`. The value of `MOON_TILT_ARGS`
+        /// (a button's input) is split into arguments and passed after them.
         #[arg(last = true)]
         args: Vec<String>,
     },
@@ -293,19 +293,8 @@ fn exec_task(
     let tasks: QueryTasksOutput = query_moon(root, config, "tasks")?;
     let resolved = task_exec::resolve(&projects, &tasks, config, target, yes)
         .map_err(|error| anyhow!(error))?;
-    let args = if args.is_empty() {
-        match get_host_env_var(buttons::ARGS_ENV)? {
-            Some(value) => task_exec::split_args(&value).map_err(|error| {
-                anyhow!(
-                    "Invalid <property>{}</property> (<shell>{value}</shell>): {error}",
-                    buttons::ARGS_ENV
-                )
-            })?,
-            None => vec![],
-        }
-    } else {
-        args
-    };
+    let args = task_exec::task_args(args, get_host_env_var(buttons::ARGS_ENV)?.as_deref())
+        .map_err(|error| anyhow!(error))?;
     let (command, command_args) = match &resolved.location {
         Location::Host => (
             config.moon_bin.clone(),

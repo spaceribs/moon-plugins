@@ -298,6 +298,8 @@ project:
       db-migrate:
         icon: "storage"
         args: "Flags"      # a text input, passed to the task after --
+      db-reset:
+        argv: ["--noinput"] # always passed by the button, after --
 tasks:
   db-migrate:
     command: "python manage.py migrate"
@@ -308,13 +310,14 @@ tasks:
     tags: ["tilt-exec", "tilt-confirm"]
 ```
 
-Both buttons appear on the `api` resource. `Apply database migrations` runs `moon run api:db-migrate -- <flags>` in a running pod of `api`. `db-reset` asks for confirmation first.
+Both buttons appear on the `api` resource. `Apply database migrations` runs `moon run api:db-migrate -- <flags>` in a running pod of `api`. `db-reset` asks for confirmation first, then runs `moon run api:db-reset -- --noinput`, while `moon run api:db-reset` on the host still prompts.
 
 - **Where:** a project's buttons go on its first declared workload (Kubernetes before Compose), else its first local resource, else Tilt's top navigation bar.
 - **How:** each button runs [`moon ext tilt -- exec <project>:<task>`](#running-a-task-where-tilt-runs-it), which asks the running Tilt where the workload is when you click. Renamed resources, Helm releases, and namespaces all work, and no shell is involved, so buttons work on Windows too.
 - **Label:** `buttons.<task>.text`, else the task's `description`, else its ID. `icon` is a [Material icon](https://fonts.google.com/icons) name.
 - **Confirmation lives on the task**, so `moon query tasks` shows which tasks are destructive. `exec` refuses a `tilt-confirm` task without `--yes`, so scripts and agents get the same safeguard as Tilt's UI.
-- **For one-off tasks.** Buttons run without a terminal, so a task that waits for input fails, and a persistent task runs until you stop it.
+- **Fixed arguments:** `buttons.<task>.argv` is a list of arguments the button always passes after `--`, ahead of anything typed into its `args` input. They're part of the button's command in the generated Tiltfile, and only the button passes them.
+- **For one-off tasks.** Buttons run without a terminal, so a task that waits for input fails (give it `argv` such as `["--noinput"]`), and a persistent task runs until you stop it.
 
 `project.tilt.buttons` settings for a task that doesn't exist, or isn't tagged `tilt-exec`, fail generation. The tags can be renamed with `execTag` and `confirmTag`. Buttons need Tilt's [`uibutton`](https://github.com/tilt-dev/tilt-extensions/tree/master/uibutton) extension, which is fetched from GitHub when the Tiltfile loads.
 
@@ -331,7 +334,7 @@ moon ext tilt -- exec api:db-reset --yes             # required for tasks tagged
 - **Kubernetes workload:** it asks the running Tilt for the workload's pods and runs `kubectl exec` in a running one, using Tilt's kubeconfig and context, so it reaches the cluster Tilt deploys to. The pod's default container is used. Needs `kubectl` on PATH.
 - **Compose workload:** it asks Tilt for the service's container and runs `docker exec` in it. Needs `docker` (`dockerBin`).
 - **No workloads:** it runs `moon run` on the host, from the workspace root, whether or not Tilt is running.
-- **Args:** without args after `--`, it reads `MOON_TILT_ARGS`, which a button's input sets. The value is split into words the same way on every platform: quotes group, backslashes escape, and nothing is expanded.
+- **Args:** args after `--` go to the task first. Then, if `MOON_TILT_ARGS` is set (a button's input sets it), its value is split into words and passed after them, the same way on every platform: quotes group, backslashes escape, and nothing is expanded. So a button's `argv` comes before what you type into its input.
 - **Errors:** it fails, naming the workload, when Tilt isn't running (on `TILT_PORT`) or the workload has no running pod or container. The task's exit code fails the command.
 
 The image needs `moon` on its PATH, which moon's Dockerfiles provide.
@@ -631,7 +634,7 @@ Every section gets the same variables. The `image` section also gets `image`, th
 | `images` | Images: `project`, `image_ref`, `dockerfile`, `command`, `watch`, `ignore`, `live_update` (`fall_back_on`, `syncs` with `local`/`remote`, `restart_entrypoint`, `restart_container`, `run` (a string or a list), or none). |
 | `image` | In the `image` section only: the image its file is for (as in `images`). |
 | `workloads` | Declared workloads: `name`, `kind` (`k8s` or `compose`), `project`, `labels` (empty with `workloadLabels: "none"`), `resource_deps`. |
-| `buttons` | [Exec buttons](#exec-buttons): `target`, `project`, `text`, `icon`, `resource` (none for the navigation bar), `confirm`, `args` (the input's label), `args_env` (the input's name), `command`. |
+| `buttons` | [Exec buttons](#exec-buttons): `target`, `project`, `text`, `icon`, `resource` (none for the navigation bar), `confirm`, `args` (the input's label), `args_env` (the input's name), `argv` (fixed arguments, possibly empty), `command` (which includes `argv`). |
 | `excluded` | Tasks left out because they depend on a task that runs Tilt, and would otherwise have been resources: `target`, `dependency`. |
 | `sections` | In the `Tiltfile` section only: the generated section files it includes, in order. |
 | `config_files` | Files the generated output is derived from (watched by `(moon)`). |
@@ -689,7 +692,7 @@ In a project's `moon.yml`, under `project.tilt` (moon's custom project metadata)
 | `serviceRestart` | Overrides the workspace `serviceRestart` for this project (local services and Live Update restarts). |
 | `resources` | Extra Tilt resource names (e.g. from the project's own `Tiltfile`) that the project ID selects. |
 | `dependsOn` | Runtime-only dependencies on other projects: their services and workloads are linked and brought up like a moon dependency's, but images don't follow them. See [Service dependencies](#service-dependencies-from-the-project-graph). |
-| `buttons` | Settings for the [exec buttons](#exec-buttons) of tasks tagged `tilt-exec`, by task ID: `text`, `icon`, and `args` (the label of a text input passed to the task after `--`). |
+| `buttons` | Settings for the [exec buttons](#exec-buttons) of tasks tagged `tilt-exec`, by task ID: `text`, `icon`, `args` (the label of a text input passed to the task after `--`), and `argv` (a list of arguments always passed after `--`, ahead of the input's). |
 | `workloads` | Tilt resources the project's own Tiltfile deploys, by kind: `k8s` (YAML, kustomize, Helm, `helm_resource`) and `compose`. Containerizes the project. See [Workloads your Tiltfiles deploy](#workloads-your-tiltfiles-deploy). |
 | `image` | Build this project's image from its committed `Dockerfile` (written by `moon docker file <project>`) under this name (used verbatim, registry prefix included). Your own resources deploy it. |
 | `liveUpdate` | `false` rebuilds the image on every change instead of syncing. An object holds settings: `run` is a command (string or list) to run in the container after each sync, without a restart, and turns Live Update on. Any other value (such as `"false"`) fails generation. |

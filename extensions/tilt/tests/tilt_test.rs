@@ -482,6 +482,15 @@ mod tilt_extension {
 
     mod exec {
         use super::*;
+        use tokio::sync::{Mutex, MutexGuard};
+
+        /// The sandbox reads `MOON_TILT_ARGS` from this process's
+        /// environment, so tests that run `exec` hold this lock.
+        static ENV: Mutex<()> = Mutex::const_new(());
+
+        async fn env_lock() -> MutexGuard<'static, ()> {
+            ENV.lock().await
+        }
 
         /// A sandbox whose `api` has tasks `fail` (the fake moon fails it) and
         /// `reset` (tagged `tilt-confirm`).
@@ -523,6 +532,7 @@ mod tilt_extension {
 
         #[tokio::test(flavor = "multi_thread")]
         async fn runs_host_tasks_with_moon() {
+            let _env = env_lock().await;
             let sandbox = create_moon_sandbox("query");
             let plugin = create_plugin(&sandbox).await;
 
@@ -536,6 +546,7 @@ mod tilt_extension {
         #[tokio::test(flavor = "multi_thread")]
         #[should_panic(expected = "api:fail exited with code 3")]
         async fn fails_when_the_task_fails() {
+            let _env = env_lock().await;
             let sandbox = create_moon_sandbox("query");
             let plugin = create_plugin(&sandbox).await;
 
@@ -545,6 +556,7 @@ mod tilt_extension {
         #[tokio::test(flavor = "multi_thread")]
         #[should_panic(expected = "pass --yes to run it")]
         async fn refuses_confirmed_tasks_without_yes() {
+            let _env = env_lock().await;
             let sandbox = create_moon_sandbox("query");
             let plugin = create_plugin(&sandbox).await;
 
@@ -553,6 +565,7 @@ mod tilt_extension {
 
         #[tokio::test(flavor = "multi_thread")]
         async fn runs_confirmed_tasks_with_yes() {
+            let _env = env_lock().await;
             let sandbox = create_moon_sandbox("query");
             let plugin = create_plugin(&sandbox).await;
 
@@ -561,6 +574,31 @@ mod tilt_extension {
                 .await;
 
             assert_eq!(ran(&sandbox), "run api:reset");
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn passes_a_button_input_after_the_args() {
+            let _env = env_lock().await;
+            let sandbox = create_moon_sandbox("query");
+            let plugin = create_plugin(&sandbox).await;
+
+            /// Unsets the variable even if `exec` fails.
+            struct Unset;
+
+            impl Drop for Unset {
+                fn drop(&mut self) {
+                    unsafe { std::env::remove_var("MOON_TILT_ARGS") };
+                }
+            }
+
+            // As a button with `argv: ["--noinput"]` and `args` runs it.
+            let _unset = Unset;
+            unsafe { std::env::set_var("MOON_TILT_ARGS", "--plan") };
+            plugin
+                .execute_extension(exec_args(&["web:lint", "--", "--noinput"]))
+                .await;
+
+            assert_eq!(ran(&sandbox), "run web:lint -- --noinput --plan");
         }
     }
 
