@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.7.0](https://github.com/spaceribs/moon-plugins/compare/tilt_extension-v0.6.2...tilt_extension-v0.7.0) - 2026-10-23
+
+### Added
+
+- *(tilt)* add env to exec buttons
+- *(tilt)* add generate --load to check the Tiltfile loads
+- *(tilt)* add fixed argv to exec buttons
+
+### Fixed
+
+- *(tilt)* require confirmation for tasks with destructive dependencies
+
+### Other
+
+- add a glossary separating moon, Tilt, and extension terms
+
 ## [0.6.2](https://github.com/spaceribs/moon-plugins/compare/tilt_extension-v0.6.1...tilt_extension-v0.6.2) - 2026-10-22
 
 ### Fixed
