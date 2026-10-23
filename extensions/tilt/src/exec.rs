@@ -77,6 +77,21 @@ pub fn resolve(
     })
 }
 
+/// The task's arguments: those after `--` (a button's argv, or a terminal's),
+/// then the value of a button's input (`MOON_TILT_ARGS`), split into words.
+pub fn task_args(mut args: Vec<String>, input: Option<&str>) -> Result<Vec<String>, String> {
+    if let Some(value) = input {
+        args.extend(split_args(value).map_err(|error| {
+            format!(
+                "Invalid <property>{}</property> (<shell>{value}</shell>): {error}",
+                crate::buttons::ARGS_ENV
+            )
+        })?);
+    }
+
+    Ok(args)
+}
+
 /// `moon run` arguments for `target`, with `args` passed after `--`.
 pub fn moon_run_args(target: &str, args: &[String]) -> Vec<String> {
     let mut run = vec!["run".to_owned(), target.to_owned()];
@@ -376,6 +391,25 @@ mod tests {
 
         assert_eq!(split_args("'open").unwrap_err(), "unclosed single quote");
         assert_eq!(split_args("\"open").unwrap_err(), "unclosed double quote");
+    }
+
+    #[test]
+    fn passes_input_args_after_the_command_line_args() {
+        // Only after `--`, as from a terminal or a button's argv.
+        assert_eq!(task_args(strings(&["a"]), None).unwrap(), ["a"]);
+        // Only a button's input.
+        assert_eq!(task_args(vec![], Some("b 'c d'")).unwrap(), ["b", "c d"]);
+        // Both: a button with argv and an input.
+        assert_eq!(
+            task_args(strings(&["--noinput"]), Some("--plan")).unwrap(),
+            ["--noinput", "--plan"]
+        );
+        // An empty input adds nothing.
+        assert_eq!(task_args(strings(&["a"]), Some("")).unwrap(), ["a"]);
+        assert_eq!(
+            task_args(strings(&["a"]), Some("'open")).unwrap_err(),
+            "Invalid <property>MOON_TILT_ARGS</property> (<shell>'open</shell>): unclosed single quote"
+        );
     }
 
     #[test]

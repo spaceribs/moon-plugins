@@ -1915,8 +1915,8 @@ mod tests {
         assert!(files["args.star"].ends_with("MOON_CFG = _moon_cfg\nmoon_edit = _moon_edit\n"));
     }
 
-    /// Two buttons: one on a resource (confirmed, with an icon and an args
-    /// input), one in the navigation bar.
+    /// Two buttons: one on a resource (confirmed, with an icon, fixed argv,
+    /// and an args input), one in the navigation bar.
     fn sample_buttons() -> Vec<crate::buttons::Button> {
         let command = |target: &str, yes: bool| {
             let mut command: Vec<String> = ["moon", "ext", "tilt", "--", "exec", target]
@@ -1924,7 +1924,7 @@ mod tests {
                 .into();
 
             if yes {
-                command.push("--yes".into());
+                command.extend(["--yes", "--", "--noinput"].map(String::from));
             }
             command
         };
@@ -1939,6 +1939,7 @@ mod tests {
                 confirm: true,
                 args: Some("Flags".into()),
                 args_env: crate::buttons::ARGS_ENV,
+                argv: vec!["--noinput".into()],
                 command: command("api:db-reset", true),
             },
             crate::buttons::Button {
@@ -1950,6 +1951,7 @@ mod tests {
                 confirm: false,
                 args: None,
                 args_env: crate::buttons::ARGS_ENV,
+                argv: vec![],
                 command: command("tooling:check", false),
             },
         ]
@@ -1978,7 +1980,7 @@ mod tests {
             )
         );
         assert!(file.contains(
-            "cmd_button(\n    \"api:db-reset\",\n    argv = [\"moon\", \"ext\", \"tilt\", \"--\", \"exec\", \"api:db-reset\", \"--yes\"],\n    text = \"Reset the database\",\n    resource = \"api\",\n    icon_name = \"delete\",\n    dir = _MOON_ROOT,\n    env = [\"%s=%s\" % (key, value) for key, value in _MOON_ENV.items()],\n    inputs = [text_input(\"MOON_TILT_ARGS\", label = \"Flags\")],\n    requires_confirmation = True,\n)\n"
+            "cmd_button(\n    \"api:db-reset\",\n    argv = [\"moon\", \"ext\", \"tilt\", \"--\", \"exec\", \"api:db-reset\", \"--yes\", \"--\", \"--noinput\"],\n    text = \"Reset the database\",\n    resource = \"api\",\n    icon_name = \"delete\",\n    dir = _MOON_ROOT,\n    env = [\"%s=%s\" % (key, value) for key, value in _MOON_ENV.items()],\n    inputs = [text_input(\"MOON_TILT_ARGS\", label = \"Flags\")],\n    requires_confirmation = True,\n)\n"
         ));
         assert!(file.contains(
             "cmd_button(\n    \"tooling:check\",\n    argv = [\"moon\", \"ext\", \"tilt\", \"--\", \"exec\", \"tooling:check\"],\n    text = \"check\",\n    location = location.NAV,\n    dir = _MOON_ROOT,\n    env = [\"%s=%s\" % (key, value) for key, value in _MOON_ENV.items()],\n)\n"

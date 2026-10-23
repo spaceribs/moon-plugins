@@ -144,7 +144,8 @@ Terms this repo introduced. Where a term reuses a moon or Tilt word, it's narrow
 | **exec button** | A Tilt button for a task tagged `tilt-exec` (`execTag`), which runs `moon ext tilt -- exec`. Settings in `project.tilt.buttons`. |
 | **confirm** | A task tagged `tilt-confirm` (`confirmTag`): its button asks first, and `exec` needs `--yes`. |
 | **exec** | `moon ext tilt -- exec <target>`: `moon run` the task where its project runs, inside its first declared workload (`kubectl exec`/`docker exec`), or on the host. |
-| **button args** | `project.tilt.buttons.<task>.args`, the label of a button's text input. Its value reaches `exec` as `MOON_TILT_ARGS` and goes to the task after `--`. |
+| **button args** | `project.tilt.buttons.<task>.args`, the label of a button's text input. Its value reaches `exec` as `MOON_TILT_ARGS` and goes to the task after `--`, after any button argv. |
+| **button argv** | `project.tilt.buttons.<task>.argv`, fixed arguments a button always passes to its task after `--`. Only part of Tilt's `cmd_button` `argv`, which is the button's whole command. |
 
 ### Generated files
 
@@ -173,7 +174,7 @@ Words used in more than one context. Say which one you mean.
 | **extension** | moon extension (`moon ext`) | Tilt extension (`ext://`) | this repo's moon extension |
 | **tag** | project or task tag | (Docker: image tag) | `tag`, `execTag`, `confirmTag` settings name moon tags |
 | **label** | (not used) | resource labels in the UI | project label, `workloadLabels`, `moon_labels()` |
-| **args** | task args (after `--`, or on a dependency) | Tiltfile args | button args, `MOON_TILT_ARGS` |
+| **args** | task args (after `--`, or on a dependency) | Tiltfile args; `cmd_button` `argv` (the whole command) | button args, `MOON_TILT_ARGS`; button argv |
 | **ci** | `moon ci`; the `CI` variable | `tilt ci` | `moon ext tilt -- ci`, which runs `tilt ci` |
 | **image** | `docker.file.image`: the base image | an image Tilt builds or deploys | `project.tilt.image`: the image name to build under |
 | **trigger** | (not used) | `tilt trigger`, trigger modes | "rebuild triggers": files that rebuild an image |
