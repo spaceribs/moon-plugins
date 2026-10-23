@@ -86,6 +86,7 @@ In an existing moon workspace:
 ```sh
 moon sync                              # (re)generate .moon/tilt/ (+ Tiltfile if missing)
 moon ext tilt -- generate [--check]    # same, on demand (--check fails if stale, for CI)
+moon ext tilt -- generate --load       # then check that Tilt can load the Tiltfile (for CI)
 moon ext tilt -- up                    # start Tilt with everything
 moon ext tilt -- up web api            # start Tilt with these projects, or add them to the running Tilt
 moon ext tilt -- focus api             # run only these projects in the running Tilt (starts it if needed)
@@ -381,6 +382,8 @@ The output is regenerated during moon's **workspace sync**: on `moon sync`, and 
 - Sync failures, such as `moon query` erroring or a missing `moonBin` path, are recorded on the sync operation, so they never block `moon run`. The exception is a bare `moonBin` name (the default `moon`) that isn't on `PATH`, which aborts the call. If moon isn't on your `PATH`, set `moonBin` to its path, or set `sync: false`.
 - In CI, moon warns about synced files "that should be committed". The extension only reports the main `Tiltfile` when it creates one, never the self-ignored output. So commit the main `Tiltfile`, and CI needs no `sync: false`.
 - `moon ext tilt -- generate --check` fails, naming the files, when any generated file is out of date, missing, or no longer produced.
+- Generating doesn't mean Tilt can load the result: a `workloads` name that no Tiltfile deploys only fails when Tilt loads it, with `k8s_resource specified unknown resource`. `moon ext tilt -- generate --load` generates, then loads the main `Tiltfile` the way `tilt up` does (with `tilt alpha tiltfile-result`), without a cluster or a running Tilt. It prints nothing from Tilt when the Tiltfile loads, and fails with Tilt's error when it doesn't. Run it in CI to catch these before anyone runs `tilt up`. With `--check`, it loads only output that's already current, and writes nothing.
+  - Loading runs what your Tiltfiles run at load time, as `tilt up` does: `local()` calls (including the main `Tiltfile`'s `moon ext tilt -- generate`), `docker compose config` for `docker_compose()`, Helm for `helm()`, and fetching `ext://` Tilt extensions from GitHub. So CI needs those tools and network access. It needs `tilt` too: `tiltBin`, or the `tilt` toolchain's binary.
 - Project Tiltfiles are evaluated relative to their own directory, as with any Tilt `include()`. Resource names must be unique across the whole workspace.
 - On macOS, `cd` into the workspace with its exact directory casing. A mismatch (e.g. `~/projects` when the folder is `~/Projects`) breaks Tilt's ignore patterns ([tilt#5271](https://github.com/tilt-dev/tilt/issues/5271)).
 

@@ -44,6 +44,51 @@ fn create_fake_moon(sandbox: &MoonWasmSandbox) {
     );
 }
 
+/// A fake `tilt` for `tilt alpha tiltfile-result`, as the extension's
+/// `tiltBin`. It records its arguments in `tilt-ran.txt`, and fails to load
+/// (exit code 5, with Tilt's error on stderr) when `load-fails` exists.
+#[cfg(unix)]
+const FAKE_TILT: &str = "/workspace/fake-tilt";
+#[cfg(windows)]
+const FAKE_TILT: &str = "/workspace/fake-tilt.cmd";
+
+fn create_fake_tilt(sandbox: &MoonWasmSandbox) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        sandbox.create_file(
+            "fake-tilt",
+            "#!/bin/sh
+             dir=\"$(dirname \"$0\")\"
+             echo \"$@\" > \"$dir/tilt-ran.txt\"
+             if [ -e \"$dir/load-fails\" ]; then
+             \x20 echo \"Loading Tiltfile at: $dir/Tiltfile\" >&2
+             \x20 echo 'Tiltfile:1:13: k8s_resource specified unknown resource \"api\"' >&2
+             \x20 exit 5
+             fi
+             echo '{\"Manifests\": []}'
+",
+        );
+
+        let path = sandbox.path().join("fake-tilt");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[cfg(windows)]
+    sandbox.create_file(
+        "fake-tilt.cmd",
+        "@echo %*> \"%~dp0tilt-ran.txt\"\r\n\
+         @if exist \"%~dp0load-fails\" goto fail\r\n\
+         @echo {\"Manifests\": []}\r\n\
+         @exit 0\r\n\
+         :fail\r\n\
+         @echo Loading Tiltfile at: %~dp0Tiltfile 1>&2\r\n\
+         @echo Tiltfile:1:13: k8s_resource specified unknown resource \"api\" 1>&2\r\n\
+         @exit 5\r\n",
+    );
+}
+
 /// A generated file in the default output directory.
 fn read_generated(sandbox: &MoonWasmSandbox, file: &str) -> String {
     std::fs::read_to_string(sandbox.path().join(".moon/tilt").join(file)).unwrap()
@@ -400,6 +445,107 @@ mod tilt_extension {
                 format!("{GENERATED_HEADER} v0.0.0 for moon. DO NOT EDIT.\n"),
             );
             plugin.execute_extension(generate_args(&["--check"])).await;
+        }
+    }
+
+    mod load {
+        use super::*;
+
+        async fn create_plugin(sandbox: &MoonWasmSandbox, tilt_bin: &str) -> ExtensionTestWrapper {
+            create_fake_moon(sandbox);
+            create_fake_tilt(sandbox);
+
+            let tilt_bin = tilt_bin.to_owned();
+
+            sandbox
+                .create_extension_with_config("tilt", move |config| {
+                    config.insert(
+                        "moon_extension_config",
+                        json!({ "moonBin": FAKE_MOON, "tiltBin": tilt_bin }),
+                    );
+                })
+                .await
+        }
+
+        fn generate_args(extra: &[&str]) -> ExecuteExtensionInput {
+            let mut args = vec!["generate".to_owned()];
+            args.extend(extra.iter().map(|arg| arg.to_string()));
+
+            ExecuteExtensionInput {
+                args,
+                ..Default::default()
+            }
+        }
+
+        fn tilt_ran(sandbox: &MoonWasmSandbox) -> Option<String> {
+            std::fs::read_to_string(sandbox.path().join("tilt-ran.txt"))
+                .ok()
+                .map(|ran| ran.trim().to_owned())
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn loads_the_main_tiltfile_after_generating() {
+            let sandbox = create_moon_sandbox("query");
+            let plugin = create_plugin(&sandbox, FAKE_TILT).await;
+
+            plugin.execute_extension(generate_args(&["--load"])).await;
+
+            assert!(sandbox.path().join(".moon/tilt/Tiltfile").exists());
+            assert_eq!(
+                tilt_ran(&sandbox).as_deref(),
+                Some("alpha tiltfile-result --file Tiltfile")
+            );
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        #[should_panic(
+            expected = r#"Tiltfile doesn't load in Tilt:\nTiltfile:1:13: k8s_resource specified unknown resource \"api\""#
+        )]
+        async fn fails_with_tilts_error() {
+            let sandbox = create_moon_sandbox("query");
+            let plugin = create_plugin(&sandbox, FAKE_TILT).await;
+
+            sandbox.create_file("load-fails", "");
+            plugin.execute_extension(generate_args(&["--load"])).await;
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn check_loads_only_current_output() {
+            let sandbox = create_moon_sandbox("query");
+            let plugin = create_plugin(&sandbox, FAKE_TILT).await;
+
+            plugin.execute_extension(generate_args(&[])).await;
+            plugin
+                .execute_extension(generate_args(&["--check", "--load"]))
+                .await;
+            assert!(tilt_ran(&sandbox).is_some());
+
+            // Stale output fails the check before Tilt runs.
+            std::fs::remove_file(sandbox.path().join("tilt-ran.txt")).unwrap();
+            sandbox.create_file(".moon/tilt/resources.tilt", "# stale\n");
+
+            let failed = tokio::spawn(async move {
+                plugin
+                    .execute_extension(generate_args(&["--check", "--load"]))
+                    .await;
+            })
+            .await;
+
+            assert!(failed.is_err());
+            assert_eq!(tilt_ran(&sandbox), None);
+            assert_eq!(
+                std::fs::read_to_string(sandbox.path().join(".moon/tilt/resources.tilt")).unwrap(),
+                "# stale\n"
+            );
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        #[should_panic(expected = "no-such-tilt isn't on PATH, and is needed to load the Tiltfile")]
+        async fn fails_without_tilt() {
+            let sandbox = create_moon_sandbox("query");
+            let plugin = create_plugin(&sandbox, "no-such-tilt").await;
+
+            plugin.execute_extension(generate_args(&["--load"])).await;
         }
     }
 

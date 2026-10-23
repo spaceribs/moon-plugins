@@ -157,6 +157,7 @@ Terms this repo introduced. Where a term reuses a moon or Tilt word, it's narrow
 | **entry Tiltfile** | `.moon/tilt/Tiltfile`, which includes project Tiltfiles and then each section file. |
 | **project Tiltfile** | A project's own `<project>/Tiltfile`, included by the entry Tiltfile (`includeProjectTiltfiles`). |
 | **section** | One generated file (`Tiltfile`, `lib`, `args`, `resources`, `image`, `workloads`, `buttons`, `selection`), rendered from its **section template** (`moon/sections/<section>.tera`). A `<section>.tera` in `templateDir` overrides one. |
+| **load check** | `moon ext tilt -- generate --load`: load the main Tiltfile as Tilt does (`tilt alpha tiltfile-result`), without a cluster, and fail with Tilt's error if it doesn't load. Catches what generation can't, such as a declared workload no Tiltfile deploys. |
 | **generated header** | The comment each generated file starts with. Generation only rewrites or deletes files that start with it. |
 
 ## Homonyms
