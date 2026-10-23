@@ -28,7 +28,8 @@ pub struct Button {
     /// workload, else its first local resource. `None` puts it in Tilt's
     /// navigation bar.
     pub resource: Option<String>,
-    /// Ask for confirmation in Tilt's UI (`confirmTag`).
+    /// Ask for confirmation in Tilt's UI: the task, or a task dependency, is
+    /// tagged `confirmTag`.
     pub confirm: bool,
     /// Label of the text input whose value is passed as args, if any.
     pub args: Option<String>,
@@ -76,7 +77,10 @@ pub fn plan_buttons(
             }
 
             let settings = settings.get(task_id).cloned().unwrap_or_default();
-            let confirm = task.tags.contains(&config.confirm_tag);
+            // Confirmed when the task, or any task dependency `moon run`
+            // runs with it, is tagged `confirmTag`, as `exec` checks.
+            let confirm =
+                crate::exec::confirmed_task(tasks, &task.target, &config.confirm_tag).is_some();
             let mut command = vec![
                 config.moon_bin.clone(),
                 "ext".into(),
@@ -522,6 +526,52 @@ mod tests {
     }
 
     #[test]
+    fn buttons_confirm_destructive_dependencies() {
+        let (projects, mut tasks) = fixture();
+
+        // web:dev depends on web:codegen.
+        tag(&mut tasks, "web", "dev", &["tilt-exec"]);
+        tag(&mut tasks, "web", "lint", &["tilt-exec"]);
+        assert!(
+            !planned(&projects, &tasks)
+                .iter()
+                .any(|button| button.confirm)
+        );
+
+        tag(&mut tasks, "web", "codegen", &["tilt-confirm"]);
+        let buttons = planned(&projects, &tasks);
+        let button = |target: &str| {
+            buttons
+                .iter()
+                .find(|button| button.target == target)
+                .unwrap()
+        };
+
+        assert!(button("web:dev").confirm);
+        assert_eq!(button("web:dev").command.last().unwrap(), "--yes");
+        assert!(!button("web:lint").confirm);
+
+        // Through a dependency of a dependency.
+        let (projects, mut tasks) = fixture();
+        let web = tasks.tasks.get_mut("web").unwrap();
+
+        web.get_mut("lint").unwrap().deps = vec![crate::query::QueryTaskDep {
+            target: "web:dev".into(),
+            ..Default::default()
+        }];
+        tag(&mut tasks, "web", "lint", &["tilt-exec"]);
+        tag(&mut tasks, "web", "codegen", &["tilt-confirm"]);
+
+        assert!(
+            planned(&projects, &tasks)
+                .iter()
+                .find(|button| button.target == "web:lint")
+                .unwrap()
+                .confirm
+        );
+    }
+
+    #[test]
     fn readme_example() {
         let (mut projects, mut tasks) = fixture();
 
@@ -600,11 +650,21 @@ mod tests {
         );
         let api = tasks.tasks.get_mut("api").unwrap();
 
-        for (id, tags) in [("seed", &["tilt-exec"][..]), ("db-flush", &[][..])] {
+        for (id, deps, tags) in [
+            ("seed", &["api:db-flush"][..], &["tilt-exec"][..]),
+            ("db-flush", &[][..], &["tilt-confirm"][..]),
+        ] {
             api.insert(
                 id.into(),
                 crate::query::QueryTask {
                     target: format!("api:{id}"),
+                    deps: deps
+                        .iter()
+                        .map(|dep| crate::query::QueryTaskDep {
+                            target: dep.to_string(),
+                            ..Default::default()
+                        })
+                        .collect(),
                     tags: tags.iter().map(|tag| tag.to_string()).collect(),
                     ..Default::default()
                 },
@@ -617,8 +677,10 @@ mod tests {
         );
         assert_eq!(
             planned(&projects, &tasks)[0].command.join(" "),
-            "moon ext tilt -- exec api:seed --env FLUSH_FLAGS=--noinput"
+            "moon ext tilt -- exec api:seed --yes --env FLUSH_FLAGS=--noinput"
         );
+        // db-flush is tagged tilt-confirm, so the button asks first.
+        assert!(planned(&projects, &tasks)[0].confirm);
     }
 
     #[test]

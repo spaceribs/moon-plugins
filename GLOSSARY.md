@@ -142,7 +142,7 @@ Terms this repo introduced. Where a term reuses a moon or Tilt word, it's narrow
 | Term | Meaning |
 | --- | --- |
 | **exec button** | A Tilt button for a task tagged `tilt-exec` (`execTag`), which runs `moon ext tilt -- exec`. Settings in `project.tilt.buttons`. |
-| **confirm** | A task tagged `tilt-confirm` (`confirmTag`): its button asks first, and `exec` needs `--yes`. |
+| **confirm** | A task tagged `tilt-confirm` (`confirmTag`), or depending on one: its button asks first, and `exec` needs `--yes`. |
 | **exec** | `moon ext tilt -- exec <target>`: `moon run` the task where its project runs, inside its first declared workload (`kubectl exec`/`docker exec`), or on the host. |
 | **button args** | `project.tilt.buttons.<task>.args`, the label of a button's text input. Its value reaches `exec` as `MOON_TILT_ARGS` and goes to the task after `--`, after any button argv. |
 | **button argv** | `project.tilt.buttons.<task>.argv`, fixed arguments a button always passes to its task after `--`. Only part of Tilt's `cmd_button` `argv`, which is the button's whole command. |
