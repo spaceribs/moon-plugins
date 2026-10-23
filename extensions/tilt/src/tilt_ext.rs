@@ -3,6 +3,7 @@ use crate::config::TiltExtensionConfig;
 use crate::exec::{self as task_exec, Location};
 use crate::export;
 use crate::images::{self, TiltArgs};
+use crate::load;
 use crate::query::{QueryProjectsOutput, QueryTasksOutput};
 use crate::tiltfile;
 use crate::toolchain;
@@ -52,6 +53,11 @@ pub enum TiltCommand {
         /// writing them.
         #[arg(long)]
         check: bool,
+
+        /// Then load the main Tiltfile as Tilt does, without a cluster, and
+        /// fail with Tilt's error if it doesn't load.
+        #[arg(long)]
+        load: bool,
 
         /// Workspace-relative directory of section templates, overriding the
         /// `templateDir` setting.
@@ -180,6 +186,7 @@ pub fn execute_extension(Json(input): Json<ExecuteExtensionInput>) -> FnResult<(
     match command {
         TiltCommand::Generate {
             check,
+            load,
             template_dir,
         } => {
             if template_dir.is_some() {
@@ -187,6 +194,10 @@ pub fn execute_extension(Json(input): Json<ExecuteExtensionInput>) -> FnResult<(
             }
 
             generate(root, &config, check)?;
+
+            if load {
+                load_tiltfile(root, &config)?;
+            }
         }
         TiltCommand::Up {
             projects,
@@ -802,6 +813,42 @@ fn generate(root: &VirtualPath, config: &TiltExtensionConfig, check: bool) -> An
     if result.changed.contains(&config.tiltfile) {
         host_log!(stdout, "Created <path>{}</path>", config.tiltfile);
     }
+
+    Ok(())
+}
+
+/// `generate --load`: load the main Tiltfile with `tilt alpha
+/// tiltfile-result`, discarding its result JSON.
+fn load_tiltfile(root: &VirtualPath, config: &TiltExtensionConfig) -> AnyResult<()> {
+    let input = tilt_command(
+        root,
+        config,
+        load::tiltfile_result_args(&config.tiltfile),
+        false,
+    )?;
+
+    // A bare name is looked up on PATH, and the host traps (uncatchably) on
+    // missing commands.
+    if !input.command.contains(['/', '\\'])
+        && !command_exists(get_host_environment()?, &input.command)
+    {
+        return Err(anyhow!(
+            "<shell>{}</shell> isn't on PATH, and is needed to load the Tiltfile. Install Tilt, configure the <id>tilt</id> toolchain, or set <property>tiltBin</property>.",
+            input.command
+        ));
+    }
+
+    let output = exec(input)?;
+
+    load::load_result(
+        &config.tiltfile,
+        output.exit_code,
+        &output.stdout,
+        &output.stderr,
+    )
+    .map_err(|error| anyhow!(error))?;
+
+    host_log!(stdout, "<path>{}</path> loads in Tilt", config.tiltfile);
 
     Ok(())
 }

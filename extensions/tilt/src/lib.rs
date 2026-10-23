@@ -3,6 +3,7 @@ pub mod config;
 pub mod exec;
 pub mod export;
 pub mod images;
+pub mod load;
 pub mod query;
 pub mod template;
 pub mod tiltfile;
