@@ -11,6 +11,8 @@ A moon extension that runs your moon workspace in [Tilt](https://tilt.dev): one 
 
 Pair it with the [Tilt toolchain](../../toolchains/tilt) to install and pin the Tilt binary.
 
+Terms such as *exposed task*, *service*, *declared workload*, and *selection* are this extension's own, and some words (resource, sync, extension) mean different things in moon and Tilt. The [glossary](../../GLOSSARY.md) defines them and maps them across moon, Tilt, and the extension.
+
 ## Contents
 
 - [Requirements](#requirements)
@@ -127,7 +129,7 @@ The generated file lists the tasks it left out for the last reason, with the dep
 
 ### Service dependencies from the project graph
 
-moon's project graph decides which services wait on which. When a selected service's project depends on another project, the service gets `resource_deps` on that project's services:
+moon's project graph decides which services wait on which. When an exposed service's project depends on another project, the service gets `resource_deps` on that project's services:
 
 ```
 web (dev)  ──dependsOn──▶  api-client (library)  ──dependsOn──▶  api (serve)  ──dependsOn──▶  db (serve)
@@ -136,7 +138,7 @@ web:dev  waits on  api:serve  waits on  db:serve
 ```
 
 - **Libraries are walked through.** Projects without services (like `api-client`) are skipped, and the walk continues to their own dependencies until it reaches projects that have services.
-- **Upstream services are included.** `db:serve` isn't tagged, but `api:serve` depends on it, so it's added to Tilt. Set `includeUpstreamServices: false` to only link services that are already selected. That also stops a project ID from [selecting](#one-tilt-instance-selected-by-project) its dependencies' resources.
+- **Upstream services are included.** `db:serve` isn't tagged, but `api:serve` depends on it, so it's added to Tilt. Set `includeUpstreamServices: false` to only link services that are already exposed. That also stops a project ID from [selecting](#one-tilt-instance-selected-by-project) its dependencies' resources.
 - **Only runtime scopes count.** By default only `production`, `development`, and `peer` dependencies are followed. `build`-scoped dependencies (tooling, codegen) are not services your app talks to. Change this with `dependencyScopes`.
 - **Only services are linked.** Non-persistent resources only follow their task `deps`.
 
@@ -242,11 +244,11 @@ A project with declared workloads is **containerized**:
 
 - **Its ID selects its workloads.** `moon ext tilt -- up api` enables `api` and `api-worker`, and their dependencies.
 - **The workloads join the graph.** Each workload waits on the project's upstream services (pulling them in), and services of projects that depend on `api` wait on every one of its workloads.
-- **Its services don't also run on the host.** Persistent tasks, and anything selected through the project's tag or `includePersistent`, aren't local resources, even when a persistent task is tagged itself. A non-persistent task tagged itself (a codegen or schema-export step, say) is still a local resource, with its task dependencies.
+- **Its services don't also run on the host.** Persistent tasks, and anything exposed through the project's tag or `includePersistent`, aren't local resources, even when a persistent task is tagged itself. A non-persistent task tagged itself (a codegen or schema-export step, say) is still a local resource, with its task dependencies.
 
 The extension decorates each workload with `k8s_resource(...)` or `dc_resource(...)`, adding `resource_deps` and a label with the project ID. Tilt merges these with your own calls, so your labels, dependencies, port-forwards, and other settings are kept. If your Tiltfiles already label workloads (by role, say) and the project label duplicates them in the UI, set `workloadLabels: "none"` to add only `resource_deps`.
 
-- **Names must match what your Tiltfile deploys**, including Helm releases from the [`helm_resource`](https://github.com/tilt-dev/tilt-extensions/tree/master/helm_resource) extension, which go under `k8s`. A declared name that nothing deploys fails Tiltfile loading with Tilt's `k8s_resource specified unknown resource "<name>"`.
+- **Names must match what your Tiltfile deploys**, including Helm releases from the [`helm_resource`](https://github.com/tilt-dev/tilt-extensions/tree/master/helm_resource) Tilt extension, which go under `k8s`. A declared name that nothing deploys fails Tiltfile loading with Tilt's `k8s_resource specified unknown resource "<name>"`.
 - Declare each kind under its own key: `k8s_resource` and `dc_resource` only accept their own kind of resource.
 - **Load Compose files before the decorations.** For Kubernetes the order doesn't matter, but Tilt rejects `dc_resource` for a service no `docker_compose()` has loaded yet (`no Docker Compose service found with name "<name>"`). Project Tiltfiles are included before the decorations, so call `docker_compose()` there, or before `include("./.moon/tilt/Tiltfile")` in your main `Tiltfile`.
 
@@ -371,7 +373,7 @@ If you already have a `Tiltfile`, add both lines to it. The `local()` line regen
 The output is regenerated during moon's **workspace sync**: on `moon sync`, and automatically before `moon run`/`moon ci`. Adding a project, a `Tiltfile`, a tag, or a dependency updates it without extra steps.
 
 - Files are only rewritten when their contents change, so a running `tilt up` reloads only when something actually changed.
-- Resources launched by Tilt run moon with `MOON_SKIP_SYNC_WORKSPACE=true`, so service restarts don't trigger syncs.
+- Resources launched by Tilt run moon with `MOON_SKIP_SYNC_WORKSPACE=true`, so service restarts don't trigger workspace syncs.
 - Inside an [image](#images), where `moon run` syncs before the build and start tasks, generation is skipped: the workspace there is `moon docker scaffold` output (it has a `dockerManifest.json` at the root), which holds only the project and its dependencies, and nothing in the image reads `.moon/tilt/`.
 - Sync failures, such as `moon query` erroring or a missing `moonBin` path, are recorded on the sync operation, so they never block `moon run`. The exception is a bare `moonBin` name (the default `moon`) that isn't on `PATH`, which aborts the call. If moon isn't on your `PATH`, set `moonBin` to its path, or set `sync: false`.
 - In CI, moon warns about synced files "that should be committed". The extension only reports the main `Tiltfile` when it creates one, never the self-ignored output. So commit the main `Tiltfile`, and CI needs no `sync: false`.
@@ -470,7 +472,7 @@ moon runs inside the build (`moon docker scaffold`, `moon docker setup`), so it 
 
   (A [custom Dockerfile template](https://moonrepo.dev/docs/config/workspace#docker) with `COPY --from=skeleton /app/.moon/plugins ./.moon/plugins` after its configs `COPY` works too.)
 - **Every cold `moon run` in an image loads the extension's WASM** (about 7 seconds on 1 CPU), on top of every toolchain plugin in `.moon/toolchains.*`, including the [`tilt` toolchain](../../toolchains/tilt/README.md) (about 4.5 seconds) although no Tilt runs there. moon registers extensions and toolchains at startup, before it decides whether to sync, so neither the extension nor `MOON_SKIP_SYNC_WORKSPACE` can avoid this. Allow for it in startup and liveness probes, for example with a Kubernetes `startupProbe`, or a server whose liveness probe only allows for its own startup can be killed and restarted in a loop.
-- **The sync itself is skipped in images**, in the build stage (the scaffold's configs, `dockerManifest.json` included, are copied in before `moon docker setup` and the build task) and the start stage. `ENV MOON_SKIP_SYNC_WORKSPACE=true` in the Dockerfile is optional, and only saves the rest of moon's sync work.
+- **The workspace sync itself is skipped in images**, in the build stage (the scaffold's configs, `dockerManifest.json` included, are copied in before `moon docker setup` and the build task) and the start stage. `ENV MOON_SKIP_SYNC_WORKSPACE=true` in the Dockerfile is optional, and only saves the rest of moon's sync work.
 
 ### Deploying your image
 
@@ -494,7 +496,7 @@ Source changes are synced into running containers instead of rebuilding the imag
   Workspace-root dependency files (the lockfile, `pnpm-workspace.yaml` or `go.work`, and the root `package.json`, `Cargo.toml` or `pyproject.toml`) are not on this list unless a task takes them as explicit inputs, so a change to them is neither synced nor rebuilt. Run `tilt trigger <resource>` or restart Tilt (see [Images](#images)).
 - **After syncing**, the same `serviceRestart` setting as local services decides:
   - default: the app is expected to reload itself (webpack, vite, nodemon, `node --watch`)
-  - `serviceRestart: "inputs"`: the process is restarted with Tilt's [`restart_process`](https://github.com/tilt-dev/tilt-extensions/tree/master/restart_process) extension, re-running the project's `docker.file.startTask`. The extension is fetched from GitHub when the Tiltfile loads. Projects whose [declared workloads](#workloads-your-tiltfiles-deploy) are all Compose services restart the container instead (`restart_container()`), because Tilt doesn't support `restart_process` for Compose. The container re-runs its CMD, which is the same `startTask`.
+  - `serviceRestart: "inputs"`: the process is restarted with Tilt's [`restart_process`](https://github.com/tilt-dev/tilt-extensions/tree/master/restart_process) extension, re-running the project's `docker.file.startTask`. Tilt fetches `restart_process` from GitHub when the Tiltfile loads. Projects whose [declared workloads](#workloads-your-tiltfiles-deploy) are all Compose services restart the container instead (`restart_container()`), because Tilt doesn't support `restart_process` for Compose. The container re-runs its CMD, which is the same `startTask`.
 - **Running a step:** `project.tilt.liveUpdate.run` runs a command in the container after each sync, without restarting the process, e.g. a codegen step a test runner's UI picks up. It takes a command string (run through a shell) or a list (run directly), and runs before any restart above, so the two combine.
 
   ```yaml
@@ -653,7 +655,7 @@ In `.moon/extensions.yml`, next to `plugin`:
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| `tag` | `"tilt"` | Tag that selects tasks, or projects whose persistent tasks are selected. |
+| `tag` | `"tilt"` | Tag that exposes tasks, or projects whose persistent tasks are exposed. |
 | `execTag` | `"tilt-exec"` | Tag that gives a task a Tilt button running it where its project runs. See [Exec buttons](#exec-buttons). |
 | `confirmTag` | `"tilt-confirm"` | Tag that marks a task destructive: its button asks for confirmation, and `exec` requires `--yes`. |
 | `includePersistent` | `false` | Expose every persistent task, regardless of tags. |

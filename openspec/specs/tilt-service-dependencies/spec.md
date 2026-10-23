@@ -1,7 +1,7 @@
 # tilt-service-dependencies Specification
 
 ## Purpose
-How the Tilt extension uses moon's project graph to decide which services wait on which, and to bring up the services a selected service needs.
+How the Tilt extension uses moon's project graph to decide which services wait on which, and to bring up the services an exposed service needs.
 
 ## Requirements
 

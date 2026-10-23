@@ -21,7 +21,7 @@ A project SHALL be able to declare the Tilt resources its own Tiltfiles deploy, 
 - **THEN** the generated Tiltfile references `api` as a Compose resource
 
 ### Requirement: Declared workloads containerize the project
-A project with at least one declared workload SHALL be containerized: its persistent tasks, and any task selected only through the project's tag or `includePersistent`, MUST NOT run as local resources. A non-persistent task that carries the tag itself SHALL still be a local resource, along with its non-persistent task dependencies.
+A project with at least one declared workload SHALL be containerized: its persistent tasks, and any task exposed only through the project's tag or `includePersistent`, MUST NOT run as local resources. A non-persistent task that carries the tag itself SHALL still be a local resource, along with its non-persistent task dependencies.
 
 #### Scenario: Tagged project with a workload
 - **WHEN** project `api` is tagged `tilt`, has a persistent task `serve`, and declares workload `api`
