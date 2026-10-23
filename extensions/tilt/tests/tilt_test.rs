@@ -3,7 +3,8 @@ use serde_json::json;
 
 /// A fake `moon` that replays captured `moon query` output (`<command>.json`
 /// next to it), as the extension's `moonBin`. `moon run` records its
-/// arguments in `ran.txt`, and fails for targets ending in `:fail`.
+/// arguments in `ran.txt`, then `FAKE_ENV=<value>` on a second line when that
+/// variable is set, and fails for targets ending in `:fail`.
 #[cfg(unix)]
 const FAKE_MOON: &str = "/workspace/fake-moon";
 #[cfg(windows)]
@@ -19,6 +20,7 @@ fn create_fake_moon(sandbox: &MoonWasmSandbox) {
             "#!/bin/sh\n\
              if [ \"$1\" = run ]; then\n\
              \x20 echo \"$@\" > \"$(dirname \"$0\")/ran.txt\"\n\
+             \x20 if [ -n \"$FAKE_ENV\" ]; then echo \"FAKE_ENV=$FAKE_ENV\" >> \"$(dirname \"$0\")/ran.txt\"; fi\n\
              \x20 case \"$2\" in *:fail) exit 3 ;; esac\n\
              \x20 exit 0\n\
              fi\n\
@@ -39,6 +41,7 @@ fn create_fake_moon(sandbox: &MoonWasmSandbox) {
          @exit /b\r\n\
          :run\r\n\
          @echo %*> \"%~dp0ran.txt\"\r\n\
+         @if defined FAKE_ENV echo FAKE_ENV=%FAKE_ENV%>> \"%~dp0ran.txt\"\r\n\
          @if \"%2\"==\"api:fail\" exit 3\r\n\
          @exit 0\r\n",
     );
@@ -720,6 +723,39 @@ mod tilt_extension {
                 .await;
 
             assert_eq!(ran(&sandbox), "run api:reset");
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn sets_env_for_host_tasks() {
+            let _env = env_lock().await;
+            let sandbox = create_moon_sandbox("query");
+            let plugin = create_plugin(&sandbox).await;
+
+            plugin
+                .execute_extension(exec_args(&["web:lint", "--env", "FAKE_ENV=a b"]))
+                .await;
+
+            assert_eq!(
+                ran(&sandbox).lines().map(str::trim).collect::<Vec<_>>(),
+                ["run web:lint", "FAKE_ENV=a b"]
+            );
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn refuses_env_without_a_value_before_running_moon() {
+            let _env = env_lock().await;
+            let sandbox = create_moon_sandbox("query");
+            let plugin = create_plugin(&sandbox).await;
+
+            let failed = tokio::spawn(async move {
+                plugin
+                    .execute_extension(exec_args(&["web:lint", "--env", "FAKE_ENV"]))
+                    .await;
+            })
+            .await;
+
+            assert!(failed.is_err());
+            assert!(!sandbox.path().join("ran.txt").exists());
         }
 
         #[tokio::test(flavor = "multi_thread")]

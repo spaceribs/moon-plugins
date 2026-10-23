@@ -77,6 +77,48 @@ pub fn resolve(
     })
 }
 
+/// Why `name` can't be an environment variable a button or `--env` sets, if
+/// it can't: names are letters, digits, and underscores, not starting with a
+/// digit (what a POSIX shell expands as `$NAME`), and `MOON_TILT_ARGS`
+/// belongs to a button's input.
+pub fn env_name_problem(name: &str) -> Option<&'static str> {
+    let valid = name
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+
+    if !valid {
+        Some("must be letters, digits, and underscores, not starting with a digit")
+    } else if name == crate::buttons::ARGS_ENV {
+        Some("is set by a button's input")
+    } else {
+        None
+    }
+}
+
+/// Environment variables from `--env KEY=VALUE` flags, in order. The value
+/// is everything after the first `=`.
+pub fn parse_env(flags: &[String]) -> Result<Vec<(String, String)>, String> {
+    flags
+        .iter()
+        .map(|flag| {
+            let Some((name, value)) = flag.split_once('=') else {
+                return Err(format!(
+                    "<shell>--env {flag}</shell> needs a value: use <shell>--env {flag}=<value></shell>"
+                ));
+            };
+
+            match env_name_problem(name) {
+                Some(problem) => Err(format!(
+                    "<shell>--env {flag}</shell>: <property>{name}</property> {problem}"
+                )),
+                None => Ok((name.to_owned(), value.to_owned())),
+            }
+        })
+        .collect()
+}
+
 /// The task's arguments: those after `--` (a button's argv, or a terminal's),
 /// then the value of a button's input (`MOON_TILT_ARGS`), split into words.
 pub fn task_args(mut args: Vec<String>, input: Option<&str>) -> Result<Vec<String>, String> {
@@ -106,13 +148,15 @@ pub fn moon_run_args(target: &str, args: &[String]) -> Vec<String> {
 
 /// `kubectl` arguments that run `moon run <target>` in a running pod of
 /// `workload`, from Tilt's `KubernetesDiscovery` for it and the `Cluster` it
-/// deploys to, so the call reaches the cluster Tilt uses.
+/// deploys to, so the call reaches the cluster Tilt uses. `kubectl exec` has
+/// no environment option, so variables in `env` are set with `env`.
 pub fn kubectl_args(
     discovery: &Value,
     cluster: &Value,
     workload: &str,
     target: &str,
     args: &[String],
+    env: &[(String, String)],
 ) -> Result<Vec<String>, String> {
     let pod = discovery["status"]["pods"]
         .as_array()
@@ -138,19 +182,28 @@ pub fn kubectl_args(
         }
     }
 
-    kubectl.extend(["exec", "-n", namespace, name, "--", "moon"].map(String::from));
+    kubectl.extend(["exec", "-n", namespace, name, "--"].map(String::from));
+
+    if !env.is_empty() {
+        kubectl.push("env".into());
+        kubectl.extend(env.iter().map(|(name, value)| format!("{name}={value}")));
+    }
+
+    kubectl.push("moon".into());
     kubectl.extend(moon_run_args(target, args));
 
     Ok(kubectl)
 }
 
 /// `docker` arguments that run `moon run <target>` in the running container
-/// of Compose service `workload`, from Tilt's `DockerComposeService` for it.
+/// of Compose service `workload`, from Tilt's `DockerComposeService` for it,
+/// with the variables in `env` set.
 pub fn docker_args(
     service: &Value,
     workload: &str,
     target: &str,
     args: &[String],
+    env: &[(String, String)],
 ) -> Result<Vec<String>, String> {
     let status = &service["status"];
     let container = status["containerName"]
@@ -159,7 +212,14 @@ pub fn docker_args(
         .ok_or_else(|| {
             format!("Compose service <id>{workload}</id> has no running container in Tilt")
         })?;
-    let mut docker = vec!["exec".to_owned(), container.to_owned(), "moon".to_owned()];
+    let mut docker = vec!["exec".to_owned()];
+
+    for (name, value) in env {
+        docker.push("-e".into());
+        docker.push(format!("{name}={value}"));
+    }
+
+    docker.extend([container.to_owned(), "moon".to_owned()]);
 
     docker.extend(moon_run_args(target, args));
 
@@ -423,7 +483,8 @@ mod tests {
                 &cluster,
                 "api",
                 "api:db-migrate",
-                &strings(&["--noinput"])
+                &strings(&["--noinput"]),
+                &[]
             )
             .unwrap(),
             [
@@ -446,7 +507,7 @@ mod tests {
 
         // Without Tilt's kubeconfig or context, kubectl's own defaults apply.
         assert_eq!(
-            kubectl_args(&discovery, &Value::Null, "api", "api:db-migrate", &[]).unwrap()[..4],
+            kubectl_args(&discovery, &Value::Null, "api", "api:db-migrate", &[], &[]).unwrap()[..4],
             [
                 "exec",
                 "-n",
@@ -464,14 +525,14 @@ mod tests {
 
         discovery["status"]["pods"][0]["phase"] = "Pending".into();
         assert_eq!(
-            kubectl_args(&discovery, &cluster, "api", "api:x", &[]).unwrap_err(),
+            kubectl_args(&discovery, &cluster, "api", "api:x", &[], &[]).unwrap_err(),
             error
         );
 
         discovery["status"]["pods"][0]["phase"] = "Running".into();
         discovery["status"]["pods"][0]["deleting"] = true.into();
         assert_eq!(
-            kubectl_args(&discovery, &cluster, "api", "api:x", &[]).unwrap_err(),
+            kubectl_args(&discovery, &cluster, "api", "api:x", &[], &[]).unwrap_err(),
             error
         );
 
@@ -481,6 +542,7 @@ mod tests {
                 &cluster,
                 "api",
                 "api:x",
+                &[],
                 &[]
             )
             .unwrap_err(),
@@ -493,7 +555,7 @@ mod tests {
         let mut service = tilt_fixture("dockercomposeservice");
 
         assert_eq!(
-            docker_args(&service, "cache", "api:warm", &strings(&["--all"])).unwrap(),
+            docker_args(&service, "cache", "api:warm", &strings(&["--all"]), &[]).unwrap(),
             [
                 "exec",
                 "tilt-exec-probe-cache-1",
@@ -507,8 +569,88 @@ mod tests {
 
         service["status"]["containerState"]["running"] = false.into();
         assert_eq!(
-            docker_args(&service, "cache", "api:warm", &[]).unwrap_err(),
+            docker_args(&service, "cache", "api:warm", &[], &[]).unwrap_err(),
             "Compose service <id>cache</id> has no running container in Tilt"
+        );
+    }
+
+    #[test]
+    fn parses_env_flags() {
+        assert_eq!(parse_env(&[]).unwrap(), []);
+        assert_eq!(
+            parse_env(&strings(&["FLUSH_FLAGS=--noinput", "A=x y=z", "EMPTY="])).unwrap(),
+            [
+                ("FLUSH_FLAGS".to_owned(), "--noinput".to_owned()),
+                ("A".to_owned(), "x y=z".to_owned()),
+                ("EMPTY".to_owned(), String::new()),
+            ]
+        );
+        assert_eq!(
+            parse_env(&strings(&["FLUSH_FLAGS"])).unwrap_err(),
+            "<shell>--env FLUSH_FLAGS</shell> needs a value: use <shell>--env FLUSH_FLAGS=<value></shell>"
+        );
+        assert_eq!(
+            parse_env(&strings(&["FLUSH-FLAGS=x"])).unwrap_err(),
+            "<shell>--env FLUSH-FLAGS=x</shell>: <property>FLUSH-FLAGS</property> must be letters, digits, and underscores, not starting with a digit"
+        );
+        assert_eq!(
+            parse_env(&strings(&["=x"])).unwrap_err(),
+            "<shell>--env =x</shell>: <property></property> must be letters, digits, and underscores, not starting with a digit"
+        );
+        assert_eq!(
+            parse_env(&strings(&["MOON_TILT_ARGS=x"])).unwrap_err(),
+            "<shell>--env MOON_TILT_ARGS=x</shell>: <property>MOON_TILT_ARGS</property> is set by a button's input"
+        );
+    }
+
+    #[test]
+    fn sets_env_in_workload_commands() {
+        let discovery = tilt_fixture("kubernetesdiscovery");
+        let service = tilt_fixture("dockercomposeservice");
+        let env = [
+            ("FLUSH_FLAGS".to_owned(), "--noinput".to_owned()),
+            ("A".to_owned(), "x y=z".to_owned()),
+        ];
+
+        assert_eq!(
+            kubectl_args(
+                &discovery,
+                &Value::Null,
+                "api",
+                "api:seed",
+                &strings(&["--quick"]),
+                &env
+            )
+            .unwrap(),
+            [
+                "exec",
+                "-n",
+                "moon-tilt-exec-probe",
+                "probe-api-6df776c848-j7t4r",
+                "--",
+                "env",
+                "FLUSH_FLAGS=--noinput",
+                "A=x y=z",
+                "moon",
+                "run",
+                "api:seed",
+                "--",
+                "--quick",
+            ]
+        );
+        assert_eq!(
+            docker_args(&service, "cache", "api:seed", &[], &env).unwrap(),
+            [
+                "exec",
+                "-e",
+                "FLUSH_FLAGS=--noinput",
+                "-e",
+                "A=x y=z",
+                "tilt-exec-probe-cache-1",
+                "moon",
+                "run",
+                "api:seed",
+            ]
         );
     }
 }

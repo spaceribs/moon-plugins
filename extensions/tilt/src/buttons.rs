@@ -36,8 +36,11 @@ pub struct Button {
     pub args_env: &'static str,
     /// Fixed arguments passed to the task after `--`, ahead of the input's.
     pub argv: Vec<String>,
+    /// Environment variables set for the button's run.
+    pub env: BTreeMap<String, String>,
     /// What the button runs: `moon ext tilt -- exec <target>`, with `--yes`
-    /// once Tilt has confirmed, then `-- <argv>`.
+    /// once Tilt has confirmed, `--env KEY=VALUE` per variable, then
+    /// `-- <argv>`.
     pub command: Vec<String>,
 }
 
@@ -87,6 +90,13 @@ pub fn plan_buttons(
                 command.push("--yes".into());
             }
 
+            let env = settings.env.unwrap_or_default();
+
+            for (name, value) in &env {
+                command.push("--env".into());
+                command.push(format!("{name}={value}"));
+            }
+
             let argv = settings.argv.unwrap_or_default();
 
             if !argv.is_empty() {
@@ -111,6 +121,7 @@ pub fn plan_buttons(
                 args: settings.args,
                 args_env: ARGS_ENV,
                 argv,
+                env,
                 command,
             });
         }
@@ -131,6 +142,9 @@ pub struct ButtonSettings {
     pub args: Option<String>,
     /// Fixed arguments passed to the task after `--`, ahead of the input's.
     pub argv: Option<Vec<String>>,
+    /// Environment variables set for the button's run, task dependencies
+    /// included.
+    pub env: Option<BTreeMap<String, String>>,
 }
 
 /// A project's `project.tilt.buttons`, by task ID. Errors name the entry.
@@ -179,6 +193,22 @@ fn parse_buttons(project: &QueryProject) -> Result<BTreeMap<String, ButtonSettin
             errors.push(format!(
                 "<property>{task}.argv</property> must be a non-empty list of strings"
             ));
+        }
+
+        match &settings.env {
+            Some(env) if env.is_empty() => errors.push(format!(
+                "<property>{task}.env</property> must be a non-empty object of environment variables"
+            )),
+            Some(env) => {
+                for name in env.keys() {
+                    if let Some(problem) = crate::exec::env_name_problem(name) {
+                        errors.push(format!(
+                            "<property>{task}.env.{name}</property> {problem}"
+                        ));
+                    }
+                }
+            }
+            None => {}
         }
 
         buttons.insert(task.clone(), settings);
@@ -333,6 +363,7 @@ mod tests {
                 args: None,
                 args_env: ARGS_ENV,
                 argv: vec![],
+                env: BTreeMap::new(),
                 command: ["moon", "ext", "tilt", "--", "exec", "web:lint"]
                     .map(String::from)
                     .into(),
@@ -451,6 +482,46 @@ mod tests {
     }
 
     #[test]
+    fn env_flags_follow_confirmation_and_precede_argv() {
+        let (mut projects, mut tasks) = fixture();
+
+        tag(&mut tasks, "web", "lint", &["tilt-exec", "tilt-confirm"]);
+        tag(&mut tasks, "web", "codegen", &["tilt-exec"]);
+        set_tilt(
+            &mut projects,
+            "web",
+            r#"{ "buttons": { "lint": { "env": { "LOG": "1", "FLUSH_FLAGS": "--noinput" }, "argv": ["--quick"] }, "codegen": { "env": { "A": "x y=z" } } } }"#,
+        );
+        let buttons = planned(&projects, &tasks);
+        let button = |target: &str| {
+            buttons
+                .iter()
+                .find(|button| button.target == target)
+                .unwrap()
+        };
+
+        // Sorted by name, after `--yes`, before `-- <argv>`.
+        assert_eq!(
+            button("web:lint").command.join(" "),
+            "moon ext tilt -- exec web:lint --yes --env FLUSH_FLAGS=--noinput --env LOG=1 -- --quick"
+        );
+        assert_eq!(
+            button("web:codegen").command,
+            [
+                "moon",
+                "ext",
+                "tilt",
+                "--",
+                "exec",
+                "web:codegen",
+                "--env",
+                "A=x y=z"
+            ]
+        );
+        assert_eq!(button("web:lint").env["LOG"], "1");
+    }
+
+    #[test]
     fn readme_example() {
         let (mut projects, mut tasks) = fixture();
 
@@ -519,6 +590,38 @@ mod tests {
     }
 
     #[test]
+    fn readme_env_example() {
+        let (mut projects, mut tasks) = fixture();
+
+        set_tilt(
+            &mut projects,
+            "api",
+            r#"{ "buttons": { "seed": { "env": { "FLUSH_FLAGS": "--noinput" } } } }"#,
+        );
+        let api = tasks.tasks.get_mut("api").unwrap();
+
+        for (id, tags) in [("seed", &["tilt-exec"][..]), ("db-flush", &[][..])] {
+            api.insert(
+                id.into(),
+                crate::query::QueryTask {
+                    target: format!("api:{id}"),
+                    tags: tags.iter().map(|tag| tag.to_string()).collect(),
+                    ..Default::default()
+                },
+            );
+        }
+
+        assert_eq!(
+            button_settings_errors(&projects, &tasks, &TiltExtensionConfig::default()),
+            None
+        );
+        assert_eq!(
+            planned(&projects, &tasks)[0].command.join(" "),
+            "moon ext tilt -- exec api:seed --env FLUSH_FLAGS=--noinput"
+        );
+    }
+
+    #[test]
     fn parses_button_settings() {
         let (projects, tasks) = api_with_buttons(
             r#"{ "build": { "text": "Build", "icon": "build", "args": "Flags" } }"#,
@@ -532,6 +635,7 @@ mod tests {
                 icon: Some("build".into()),
                 args: Some("Flags".into()),
                 argv: None,
+                env: None,
             }
         );
         assert_eq!(
@@ -589,6 +693,52 @@ mod tests {
         );
         assert_eq!(
             errors(r#"{ "build": { "argv": ["--noinput", ""] } }"#),
+            None
+        );
+
+        let error = errors(r#"{ "build": { "env": ["A=1"] } }"#).unwrap();
+        assert!(
+            error.contains("<property>build</property>: invalid type: sequence, expected a map"),
+            "{error}"
+        );
+
+        let error = errors(r#"{ "build": { "env": { "A": 1 } } }"#).unwrap();
+        assert!(
+            error.contains("<property>build</property>: invalid type: integer"),
+            "{error}"
+        );
+
+        assert_eq!(
+            errors(r#"{ "build": { "env": {} } }"#).unwrap(),
+            "<property>project.tilt.buttons</property> of <id>api</id> <property>build.env</property> must be a non-empty object of environment variables"
+        );
+
+        for (name, problem) in [
+            (
+                "FLUSH-FLAGS",
+                "must be letters, digits, and underscores, not starting with a digit",
+            ),
+            (
+                "1KEY",
+                "must be letters, digits, and underscores, not starting with a digit",
+            ),
+            ("MOON_TILT_ARGS", "is set by a button's input"),
+        ] {
+            assert_eq!(
+                errors(&format!(
+                    r#"{{ "build": {{ "env": {{ "{name}": "x" }} }} }}"#
+                ))
+                .unwrap(),
+                format!(
+                    "<property>project.tilt.buttons</property> of <id>api</id> <property>build.env.{name}</property> {problem}"
+                )
+            );
+        }
+
+        assert_eq!(
+            errors(
+                r#"{ "build": { "env": { "FLUSH_FLAGS": "--noinput", "EMPTY": "", "_x1": "y" } } }"#
+            ),
             None
         );
 

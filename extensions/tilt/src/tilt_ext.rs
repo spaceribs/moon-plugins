@@ -121,6 +121,11 @@ pub enum TiltCommand {
         #[arg(long)]
         yes: bool,
 
+        /// Set an environment variable for the task and its task
+        /// dependencies, wherever it runs. Repeatable.
+        #[arg(long = "env", value_name = "KEY=VALUE")]
+        env: Vec<String>,
+
         /// Arguments for the task, after `--`. The value of `MOON_TILT_ARGS`
         /// (a button's input) is split into arguments and passed after them.
         #[arg(last = true)]
@@ -277,8 +282,13 @@ pub fn execute_extension(Json(input): Json<ExecuteExtensionInput>) -> FnResult<(
 
             start_tilt(root, &config, "ci", &args, tilt_args)?;
         }
-        TiltCommand::Exec { target, yes, args } => {
-            exec_task(root, &config, &target, yes, args)?;
+        TiltCommand::Exec {
+            target,
+            yes,
+            env,
+            args,
+        } => {
+            exec_task(root, &config, &target, yes, &env, args)?;
         }
         TiltCommand::Down { tilt_args } => {
             run_tilt(root, &config, "down", tilt_args)?;
@@ -298,8 +308,10 @@ fn exec_task(
     config: &TiltExtensionConfig,
     target: &str,
     yes: bool,
+    env: &[String],
     args: Vec<String>,
 ) -> AnyResult<()> {
+    let env = task_exec::parse_env(env).map_err(|error| anyhow!(error))?;
     let projects: QueryProjectsOutput = query_moon(root, config, "projects")?;
     let tasks: QueryTasksOutput = query_moon(root, config, "tasks")?;
     let resolved = task_exec::resolve(&projects, &tasks, config, target, yes)
@@ -325,8 +337,15 @@ fn exec_task(
 
             (
                 "kubectl".to_owned(),
-                task_exec::kubectl_args(&discovery, &cluster, workload, &resolved.target, &args)
-                    .map_err(|error| anyhow!(error))?,
+                task_exec::kubectl_args(
+                    &discovery,
+                    &cluster,
+                    workload,
+                    &resolved.target,
+                    &args,
+                    &env,
+                )
+                .map_err(|error| anyhow!(error))?,
             )
         }
         Location::Compose(workload) => {
@@ -339,13 +358,20 @@ fn exec_task(
 
             (
                 config.docker_bin.clone(),
-                task_exec::docker_args(&service, workload, &resolved.target, &args)
+                task_exec::docker_args(&service, workload, &resolved.target, &args, &env)
                     .map_err(|error| anyhow!(error))?,
             )
         }
     };
 
-    let output = exec(ExecCommandInput::new(&command, command_args).cwd(root.clone()))?;
+    let mut input = ExecCommandInput::new(&command, command_args).cwd(root.clone());
+
+    // In a workload, the variables are part of the `kubectl`/`docker` command.
+    if resolved.location == Location::Host {
+        input.env.extend(env);
+    }
+
+    let output = exec(input)?;
 
     if output.exit_code != 0 {
         return Err(anyhow!(

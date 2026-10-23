@@ -18,7 +18,7 @@
 
 **Non-Goals:**
 - Inputs per variable. See proposal.md (Out of scope).
-- Overriding a variable the task declares in its own `env`: moon's precedence applies.
+- Changing moon's precedence: an inherited variable wins over the same variable in a task's own `env` (checked with moon 2.6.2), so a button's variable wins too.
 
 ## Decisions
 
@@ -40,8 +40,8 @@ None of them touches the container's or pod's environment for other processes.
 ## Risks / Trade-offs
 
 - [An image without `env`, such as a distroless one] → `kubectl exec` fails with the container's "executable file not found" error, and only for buttons that set `env`. Such an image wouldn't have the shell moon's tasks use anyway.
-- [A cached task dependency doesn't run again, so its variable has no effect] → moon's caching, not the extension's. The README recommends `cache: false` or the variable as an input, and verification 4.1 checks it with real moon.
-- [A task declares the same variable in its own `env`] → moon decides which wins. Verification 4.1 records what real moon does, and the README states it.
+- [A cached task dependency doesn't run again, so its variable has no effect] → moon's caching, not the extension's. The README recommends `cache: false` or the variable as an input. Checked with moon 2.6.2: a cached dependency replayed its output under `--env`.
+- [A task declares the same variable in its own `env`] → moon 2.6.2 lets the inherited variable win, so the button's value applies. The README states it.
 - [Windows hosts] → moon's default shell there isn't POSIX, so `$KEY` in a host task's command doesn't expand the same way. The variable is still set, and the README says so. Containers are Linux.
 
 ## Migration Plan
