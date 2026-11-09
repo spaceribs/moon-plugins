@@ -135,6 +135,7 @@ Terms this repo introduced. Where a term reuses a moon or Tilt word, it's narrow
 | **decoration** | The `k8s_resource()`/`dc_resource()` call the extension adds for a declared workload: its `resource_deps` and project label. Tilt merges it with your own call. |
 | **project label** | The project ID as a Tilt label (`workloadLabels: "project"`). `moon_labels()` in `lib.star` returns it for resources your own Tiltfile defines. |
 | **image** | A project's container image, built from its committed `Dockerfile` when it sets `project.tilt.image`. Your own deploy uses it by that name. |
+| **image build options** | `project.tilt.imageBuild`: `ssh`, `secrets`, `args`, and `target`, added to the image's `docker build`. Not Tilt's `docker_build()` arguments, which the extension doesn't use. |
 | **published image** | What an image name resolves to in your registry: used for projects not being edited. |
 
 ### Exec buttons
