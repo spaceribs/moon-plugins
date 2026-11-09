@@ -494,6 +494,8 @@ node_modules
 
 [moon's Docker guide](https://moonrepo.dev/docs/guides/docker) recommends ignoring `.moon/cache` (not portable between machines) and `.git` (moon still works in the image, with its caching disabled, and the image stays smaller).
 
+**Per-image ignore files:** BuildKit (Docker's default builder since Docker 23) also reads a Dockerfile-specific ignore file, `<project>/Dockerfile.dockerignore`, when building with `-f <project>/Dockerfile`, as the extension does. It **replaces** the root `.dockerignore` for that image rather than adding to it, and its patterns are relative to the build context, the workspace root, not to the project. Use it to keep other projects' sources out of one image's build. moon runs inside the build and loads the whole workspace's configuration, so keep `.moon/` and every project's `moon.*` files, and repeat the root file's entries (`.git`, `.moon/cache`, ...). It changes only what Docker receives: what triggers a rebuild still comes from the project graph, as above.
+
 **Base images:** moon's generated Dockerfile installs moon with `curl ... | bash`, so the `docker.file.image` needs both (e.g. `node:22`, not `node:22-alpine`). For Alpine, use a [custom Dockerfile template](https://moonrepo.dev/docs/config/workspace#docker) that installs moon with `npm install -g @moonrepo/cli`, and set `ENV MOON_TOOLCHAIN_FORCE_GLOBALS=true`, as moon's guide shows.
 
 #### Plugins inside the image build
