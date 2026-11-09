@@ -168,6 +168,141 @@ pub fn live_update_settings_error(projects: &QueryProjectsOutput) -> Option<Stri
     })
 }
 
+/// A project's `project.tilt.imageBuild`: options for its `docker build`.
+#[derive(Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct ImageBuildSettings {
+    /// `--ssh <value>` each, e.g. `default` to forward the SSH agent.
+    ssh: Option<Vec<String>>,
+    /// `--build-arg NAME=VALUE` each.
+    args: Option<BTreeMap<String, String>>,
+    /// `--target <stage>`.
+    target: Option<String>,
+    /// `--secret <value>` each, e.g. `id=npmrc,src=.npmrc`.
+    secrets: Option<Vec<String>>,
+}
+
+/// A project's `project.tilt.imageBuild`, if set. Errors name the option.
+fn parse_image_build(
+    project: &crate::query::QueryProject,
+) -> Result<Option<ImageBuildSettings>, Vec<String>> {
+    let Some(tilt) = project.config.tilt_metadata() else {
+        return Ok(None);
+    };
+    let Some(value) = tilt.get("imageBuild") else {
+        return Ok(None);
+    };
+    if !value.is_object() {
+        return Err(vec![format!(
+            "must be an object of <property>ssh</property>, <property>args</property>, <property>target</property>, and <property>secrets</property>, not {value}"
+        )]);
+    }
+
+    let settings =
+        ImageBuildSettings::deserialize(value).map_err(|error| vec![error.to_string()])?;
+    let mut errors = vec![];
+
+    if !tilt.get("image").is_some_and(|image| image.is_string()) {
+        errors.push(
+            "is set, but the project doesn't set <property>project.tilt.image</property>"
+                .to_owned(),
+        );
+    }
+
+    for (option, values) in [("ssh", &settings.ssh), ("secrets", &settings.secrets)] {
+        if values.iter().flatten().any(|value| value.trim().is_empty()) {
+            errors.push(format!(
+                "<property>{option}</property> must be a list of non-empty strings"
+            ));
+        }
+    }
+
+    for name in settings.args.iter().flat_map(|args| args.keys()) {
+        if name.is_empty() || name.contains('=') || name.chars().any(char::is_whitespace) {
+            errors.push(format!(
+                "<property>args</property> has an invalid build-arg name <id>{name}</id>: it must be non-empty, without <id>=</id> or whitespace"
+            ));
+        }
+    }
+
+    if settings
+        .target
+        .as_deref()
+        .is_some_and(|target| target.trim().is_empty())
+    {
+        errors.push("<property>target</property> must be a non-empty string".to_owned());
+    }
+
+    if errors.is_empty() {
+        Ok(Some(settings))
+    } else {
+        Err(errors)
+    }
+}
+
+/// Every malformed `project.tilt.imageBuild`, as one error message, so a
+/// typo fails generation instead of silently not building as configured.
+pub fn image_build_settings_error(projects: &QueryProjectsOutput) -> Option<String> {
+    let errors: Vec<String> = projects
+        .projects
+        .iter()
+        .flat_map(|project| {
+            parse_image_build(project)
+                .err()
+                .into_iter()
+                .flatten()
+                .map(move |error| {
+                    format!(
+                        "<property>project.tilt.imageBuild</property> of <id>{}</id> {error}",
+                        project.id
+                    )
+                })
+        })
+        .collect();
+
+    (!errors.is_empty()).then(|| errors.join("\n"))
+}
+
+/// `docker build` options from `imageBuild`, as shell words: `--target`,
+/// `--build-arg` (sorted by name), `--ssh`, then `--secret`.
+fn image_build_options(settings: &ImageBuildSettings) -> Vec<String> {
+    let mut options = vec![];
+
+    if let Some(target) = &settings.target {
+        options.push("--target".to_owned());
+        options.push(shell_quote(target));
+    }
+
+    for (name, value) in settings.args.iter().flatten() {
+        options.push("--build-arg".to_owned());
+        options.push(shell_quote(&format!("{name}={value}")));
+    }
+
+    for (flag, values) in [("--ssh", &settings.ssh), ("--secret", &settings.secrets)] {
+        for value in values.iter().flatten() {
+            options.push(flag.to_owned());
+            options.push(shell_quote(value));
+        }
+    }
+
+    options
+}
+
+/// `value` as one `sh` word: as is when it has only safe characters, else
+/// single-quoted, with `'` written as `'\''`.
+fn shell_quote(value: &str) -> String {
+    let safe = !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_./:=,@%+-".contains(c));
+
+    if safe {
+        value.to_owned()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Sync {
     pub local: String,
@@ -220,12 +355,20 @@ pub fn plan_images(
                 &dockerfile,
             );
 
+            // Malformed settings are reported by `image_build_settings_error`.
+            let options = parse_image_build(project)
+                .ok()
+                .flatten()
+                .map(|settings| image_build_options(&settings))
+                .unwrap_or_default();
+            let options: String = options.iter().map(|option| format!(" {option}")).collect();
+
             Some(Image {
                 project: project.id.clone(),
                 image_ref,
                 live_update,
                 command: format!(
-                    "{docker} build -t $EXPECTED_REF -f {dockerfile} .",
+                    "{docker} build -t $EXPECTED_REF -f {dockerfile}{options} .",
                     docker = config.docker_bin,
                 ),
                 dockerfile,
@@ -1045,6 +1188,120 @@ mod tests {
             .find(|i| i.project == "web")
             .unwrap()
             .live_update
+    }
+
+    /// `api`'s project settings set to `tilt` (a JSON object).
+    fn api_with_tilt(tilt: &str) -> QueryProjectsOutput {
+        let (mut projects, _) = fixture();
+
+        projects
+            .projects
+            .iter_mut()
+            .find(|p| p.id == "api")
+            .unwrap()
+            .config
+            .project = Some(QueryProjectMetadata {
+            metadata: serde_json::from_str(&format!(r#"{{ "tilt": {tilt} }}"#)).unwrap(),
+        });
+
+        projects
+    }
+
+    fn api_command(image_build: &str) -> String {
+        let projects = api_with_tilt(&format!(
+            r#"{{ "image": "acme/api", "imageBuild": {image_build} }}"#
+        ));
+
+        assert_eq!(image_build_settings_error(&projects), None);
+
+        plan_images(
+            &projects,
+            &fixture().1,
+            &TiltExtensionConfig::default(),
+            &config_files(),
+        )
+        .into_iter()
+        .find(|i| i.project == "api")
+        .unwrap()
+        .command
+    }
+
+    #[test]
+    fn adds_image_build_options_to_the_command() {
+        // The issue's case: forward the SSH agent.
+        assert_eq!(
+            api_command(r#"{ "ssh": ["default"] }"#),
+            "docker build -t $EXPECTED_REF -f api/Dockerfile --ssh default ."
+        );
+        // Every option, in a fixed order, quoted where needed.
+        assert_eq!(
+            api_command(
+                r#"{ "target": "dev", "args": { "GOPRIVATE": "github.com/acme/*" }, "ssh": ["default"], "secrets": ["id=npmrc,src=.npmrc"] }"#
+            ),
+            "docker build -t $EXPECTED_REF -f api/Dockerfile --target dev --build-arg 'GOPRIVATE=github.com/acme/*' --ssh default --secret id=npmrc,src=.npmrc ."
+        );
+        // Build args sorted by name; a quote inside a value; an empty value.
+        assert_eq!(
+            api_command(r#"{ "args": { "Z": "it's", "A": "", "B": "a b" } }"#),
+            r#"docker build -t $EXPECTED_REF -f api/Dockerfile --build-arg A= --build-arg 'B=a b' --build-arg 'Z=it'\''s' ."#
+        );
+        // An empty object changes nothing.
+        assert_eq!(
+            api_command("{}"),
+            "docker build -t $EXPECTED_REF -f api/Dockerfile ."
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_image_build_settings() {
+        let error = |tilt: &str| image_build_settings_error(&api_with_tilt(tilt));
+        let prefix = "<property>project.tilt.imageBuild</property> of <id>api</id>";
+
+        assert_eq!(error(r#"{ "image": "acme/api" }"#), None);
+
+        let unknown =
+            error(r#"{ "image": "acme/api", "imageBuild": { "platform": "linux/amd64" } }"#)
+                .unwrap();
+        assert!(
+            unknown.starts_with(prefix) && unknown.contains("unknown field `platform`"),
+            "{unknown}"
+        );
+
+        let wrong_type =
+            error(r#"{ "image": "acme/api", "imageBuild": { "ssh": "default" } }"#).unwrap();
+        assert!(wrong_type.contains("invalid type: string"), "{wrong_type}");
+
+        assert_eq!(
+            error(r#"{ "image": "acme/api", "imageBuild": ["--ssh"] }"#).unwrap(),
+            format!(
+                "{prefix} must be an object of <property>ssh</property>, <property>args</property>, <property>target</property>, and <property>secrets</property>, not [\"--ssh\"]"
+            )
+        );
+
+        assert_eq!(
+            error(r#"{ "image": "acme/api", "imageBuild": { "ssh": [""], "secrets": [" "], "target": "", "args": { "A B": "x", "C=D": "y" } } }"#)
+                .unwrap()
+                .lines()
+                .map(|line| line.strip_prefix(prefix).unwrap().trim())
+                .collect::<Vec<_>>(),
+            [
+                "<property>ssh</property> must be a list of non-empty strings",
+                "<property>secrets</property> must be a list of non-empty strings",
+                "<property>args</property> has an invalid build-arg name <id>A B</id>: it must be non-empty, without <id>=</id> or whitespace",
+                "<property>args</property> has an invalid build-arg name <id>C=D</id>: it must be non-empty, without <id>=</id> or whitespace",
+                "<property>target</property> must be a non-empty string",
+            ]
+        );
+
+        assert_eq!(
+            error(r#"{ "imageBuild": { "ssh": ["default"] } }"#).unwrap(),
+            format!(
+                "{prefix} is set, but the project doesn't set <property>project.tilt.image</property>"
+            )
+        );
+
+        // Every project is checked.
+        assert_eq!(image_build_settings_error(&fixture().0), None);
     }
 
     #[test]

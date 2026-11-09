@@ -498,6 +498,34 @@ node_modules
 
 **Base images:** moon's generated Dockerfile installs moon with `curl ... | bash`, so the `docker.file.image` needs both (e.g. `node:22`, not `node:22-alpine`). For Alpine, use a [custom Dockerfile template](https://moonrepo.dev/docs/config/workspace#docker) that installs moon with `npm install -g @moonrepo/cli`, and set `ENV MOON_TOOLCHAIN_FORCE_GLOBALS=true`, as moon's guide shows.
 
+#### Build options
+
+`project.tilt.imageBuild` adds options to a project's `docker build`. The common case is a build that fetches private dependencies over git (Go modules, Python git sources) in a `RUN --mount=type=ssh` step, which needs the developer's SSH agent forwarded:
+
+```yaml
+# apps/api/moon.yml
+project:
+  tilt:
+    image: "acme/api"
+    imageBuild:
+      ssh: ["default"]
+```
+
+`api`'s image then builds with `docker build -t $EXPECTED_REF -f apps/api/Dockerfile --ssh default .`. Every option:
+
+| Option | Passed as |
+| --- | --- |
+| `ssh` | `--ssh <value>` each, e.g. `["default"]` to forward `SSH_AUTH_SOCK` |
+| `secrets` | `--secret <value>` each, e.g. `["id=npmrc,src=.npmrc"]`, read by `RUN --mount=type=secret,id=npmrc` |
+| `args` | `--build-arg NAME=VALUE` each, from an object, sorted by name |
+| `target` | `--target <stage>` |
+
+- Values are quoted for the shell where needed, so `github.com/acme/*` stays literal.
+- `ssh` and `secrets` need BuildKit, Docker's default builder since Docker 23.
+- **Credentials go in `ssh` or `secrets`, never `args`:** build args are recorded in the image's history.
+- Forward the agent only for projects that need it. Any step of that build can use the developer's keys, and each use can prompt their key agent.
+- Unknown options, wrong types, empty values, and `imageBuild` on a project without `image` fail generation, naming the project and option. Rebuild triggers don't change: a secret's file isn't watched.
+
 #### Plugins inside the image build
 
 moon runs inside the build (`moon docker scaffold`, `moon docker setup`), so it loads your workspace's plugins there too.
@@ -734,4 +762,5 @@ In a project's `moon.yml`, under `project.tilt` (moon's custom project metadata)
 | `buttons` | Settings for the [exec buttons](#exec-buttons) of tasks tagged `tilt-exec`, by task ID: `text`, `icon`, `args` (the label of a text input passed to the task after `--`), `argv` (a list of arguments always passed after `--`, ahead of the input's), and `env` (variables set for the button's run, task dependencies included). |
 | `workloads` | Tilt resources the project's own Tiltfile deploys, by kind: `k8s` (YAML, kustomize, Helm, `helm_resource`) and `compose`. Containerizes the project. See [Workloads your Tiltfiles deploy](#workloads-your-tiltfiles-deploy). |
 | `image` | Build this project's image from its committed `Dockerfile` (written by `moon docker file <project>`) under this name (used verbatim, registry prefix included). Your own resources deploy it. |
+| `imageBuild` | [Build options](#build-options) for the image's `docker build`: `ssh`, `secrets`, `args`, and `target`. |
 | `liveUpdate` | `false` rebuilds the image on every change instead of syncing. An object holds settings: `run` is a command (string or list) to run in the container after each sync, without a restart, and turns Live Update on. Any other value (such as `"false"`) fails generation. |

@@ -483,6 +483,10 @@ fn render_generated(root: &VirtualPath, config: &TiltExtensionConfig) -> AnyResu
         return Err(anyhow!(error));
     }
 
+    if let Some(error) = images::image_build_settings_error(&projects) {
+        return Err(anyhow!(error));
+    }
+
     if let Some(error) =
         images::missing_dockerfiles_error(&projects, config, |path| root.join(path).is_file())
     {
