@@ -752,6 +752,40 @@ mod tilt_extension {
         }
 
         #[tokio::test(flavor = "multi_thread")]
+        async fn runs_host_tagged_tasks_of_containerized_projects_on_the_host() {
+            let _env = env_lock().await;
+            let sandbox = create_moon_sandbox("query");
+            let plugin = create_plugin(&sandbox).await;
+
+            // api runs in a Kubernetes workload, which nothing here runs: a
+            // task that went there would fail asking Tilt for its pod.
+            let path = sandbox.path().join("projects.json");
+            let mut projects: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            let api = projects["projects"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|project| project["id"] == "api")
+                .unwrap();
+
+            api["config"]["project"] =
+                json!({ "metadata": { "tilt": { "workloads": { "k8s": ["api"] } } } });
+            std::fs::write(path, projects.to_string()).unwrap();
+
+            let path = sandbox.path().join("tasks.json");
+            let mut tasks: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+
+            tasks["tasks"]["api"]["rollout"] = json!({ "id": "rollout", "target": "api:rollout", "command": "rollout", "tags": ["tilt-exec-host"] });
+            std::fs::write(path, tasks.to_string()).unwrap();
+
+            plugin.execute_extension(exec_args(&["api:rollout"])).await;
+
+            assert_eq!(ran(&sandbox), "run api:rollout");
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
         async fn sets_env_for_host_tasks() {
             let _env = env_lock().await;
             let sandbox = create_moon_sandbox("query");

@@ -44,7 +44,7 @@ The extension conforms to both sides. It never changes what a moon or Tilt term 
 | (none) | runtime-only dependency (`project.tilt.dependsOn`) | `resource_deps` |
 | task `inputs`, `outputs`, `.gitignore` | watch rules | resource `deps` and `ignore`, `watch_settings()` |
 | project ID | project label, selection key | resource `labels`, Tiltfile args |
-| task tags `tilt`, `tilt-exec`, `tilt-confirm` | exposure, exec button, confirmation | `local_resource`, `cmd_button`, `requires_confirmation` |
+| task tags `tilt`, `tilt-exec`, `tilt-exec-host`, `tilt-confirm` | exposure, exec button, host exec button, confirmation | `local_resource`, `cmd_button`, `requires_confirmation` |
 | project with `docker.file` + committed `Dockerfile` | image (`project.tilt.image`) | `custom_build` |
 | (none: deployed by your Tiltfile) | declared workload (`project.tilt.workloads`) | Kubernetes or Compose resource, decorated with `k8s_resource()`/`dc_resource()` |
 | affected projects | `--edit-affected` | `--to-edit` Tiltfile arg |
@@ -144,6 +144,7 @@ Terms this repo introduced. Where a term reuses a moon or Tilt word, it's narrow
 | Term | Meaning |
 | --- | --- |
 | **exec button** | A Tilt button for a task tagged `tilt-exec` (`execTag`), which runs `moon ext tilt -- exec`. Settings in `project.tilt.buttons`. |
+| **host exec button** | An exec button for a task tagged `tilt-exec-host` (`hostExecTag`): `exec` runs it on the host even when its project declares workloads, for actions on the cluster from outside it. |
 | **confirm** | A task tagged `tilt-confirm` (`confirmTag`), or depending on one: its button asks first, and `exec` needs `--yes`. |
 | **exec** | `moon ext tilt -- exec <target>`: `moon run` the task where its project runs, inside its first declared workload (`kubectl exec`/`docker exec`), or on the host. |
 | **button args** | `project.tilt.buttons.<task>.args`, the label of a button's text input. Its value reaches `exec` as `MOON_TILT_ARGS` and goes to the task after `--`, after any button argv. |

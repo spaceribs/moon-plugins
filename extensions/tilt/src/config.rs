@@ -47,6 +47,11 @@ pub struct TiltExtensionConfig {
     /// or on the host.
     pub exec_tag: String,
 
+    /// Tasks with this tag get a button like `execTag` tasks, but
+    /// `moon ext tilt -- exec` always runs them on the host, even in a project
+    /// with declared workloads: actions on the cluster from outside it.
+    pub host_exec_tag: String,
+
     /// Tasks with this tag are destructive: their buttons ask for
     /// confirmation, and `moon ext tilt -- exec` refuses them without `--yes`.
     pub confirm_tag: String,
@@ -156,6 +161,7 @@ impl Default for TiltExtensionConfig {
         Self {
             tag: "tilt".into(),
             exec_tag: "tilt-exec".into(),
+            host_exec_tag: "tilt-exec-host".into(),
             confirm_tag: "tilt-confirm".into(),
             include_persistent: false,
             link_project_dependencies: true,
@@ -198,11 +204,15 @@ mod tests {
         let config = parse("{}");
 
         assert_eq!(config.exec_tag, "tilt-exec");
+        assert_eq!(config.host_exec_tag, "tilt-exec-host");
         assert_eq!(config.confirm_tag, "tilt-confirm");
 
-        let config = parse(r#"{ "execTag": "button", "confirmTag": "destructive" }"#);
+        let config = parse(
+            r#"{ "execTag": "button", "hostExecTag": "host-button", "confirmTag": "destructive" }"#,
+        );
 
         assert_eq!(config.exec_tag, "button");
+        assert_eq!(config.host_exec_tag, "host-button");
         assert_eq!(config.confirm_tag, "destructive");
     }
 
