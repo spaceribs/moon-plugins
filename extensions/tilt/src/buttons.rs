@@ -72,7 +72,7 @@ pub fn plan_buttons(
             });
 
         for (task_id, task) in project_tasks {
-            if !task.tags.contains(&config.exec_tag) {
+            if !has_button(task, config) {
                 continue;
             }
 
@@ -132,6 +132,11 @@ pub fn plan_buttons(
     }
 
     buttons
+}
+
+/// Whether a task gets a button: it's tagged `execTag` or `hostExecTag`.
+pub fn has_button(task: &crate::query::QueryTask, config: &TiltExtensionConfig) -> bool {
+    task.tags.contains(&config.exec_tag) || task.tags.contains(&config.host_exec_tag)
 }
 
 /// One task's `project.tilt.buttons.<task>` settings.
@@ -264,9 +269,9 @@ pub fn button_settings_errors(
                 None => errors.push(format!(
                     "{setting} configures <property>{task_id}</property>, which isn't a task of the project"
                 )),
-                Some(task) if !task.tags.contains(&config.exec_tag) => errors.push(format!(
-                    "{setting} configures <property>{task_id}</property>, which isn't tagged <id>{}</id>",
-                    config.exec_tag
+                Some(task) if !has_button(task, config) => errors.push(format!(
+                    "{setting} configures <property>{task_id}</property>, which isn't tagged <id>{}</id> or <id>{}</id>",
+                    config.exec_tag, config.host_exec_tag
                 )),
                 Some(_) => {}
             }
@@ -572,6 +577,43 @@ mod tests {
     }
 
     #[test]
+    fn host_tagged_tasks_get_buttons_where_their_project_runs() {
+        let (mut projects, mut tasks) = fixture();
+
+        tag(&mut tasks, "api", "build", &["tilt-exec-host"]);
+        tag(&mut tasks, "web", "lint", &["tilt-exec", "tilt-exec-host"]);
+        set_tilt(
+            &mut projects,
+            "api",
+            r#"{ "workloads": { "k8s": ["api"] }, "buttons": { "build": { "text": "Roll out env" } } }"#,
+        );
+
+        assert_eq!(
+            button_settings_errors(&projects, &tasks, &TiltExtensionConfig::default()),
+            None
+        );
+
+        let buttons = planned(&projects, &tasks);
+        let api = buttons
+            .iter()
+            .find(|button| button.target == "api:build")
+            .unwrap();
+
+        // On the project's workload, like any button; exec decides where it runs.
+        assert_eq!(api.resource.as_deref(), Some("api"));
+        assert_eq!(api.text, "Roll out env");
+        assert_eq!(api.command.join(" "), "moon ext tilt -- exec api:build");
+        // Both tags: one button.
+        assert_eq!(
+            buttons
+                .iter()
+                .filter(|button| button.target == "web:lint")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn readme_example() {
         let (mut projects, mut tasks) = fixture();
 
@@ -818,7 +860,7 @@ mod tests {
         );
         assert_eq!(
             errors(r#"{ "serve": {} }"#).unwrap(),
-            "<property>project.tilt.buttons</property> of <id>api</id> configures <property>serve</property>, which isn't tagged <id>tilt-exec</id>"
+            "<property>project.tilt.buttons</property> of <id>api</id> configures <property>serve</property>, which isn't tagged <id>tilt-exec</id> or <id>tilt-exec-host</id>"
         );
 
         // Every problem is listed.

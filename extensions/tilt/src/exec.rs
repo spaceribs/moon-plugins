@@ -25,8 +25,10 @@ pub struct Exec {
     pub location: Location,
 }
 
-/// Resolve `target` (`<project>:<task>`) to where it runs, refusing tasks
-/// tagged `confirmTag`, or depending on one, without `yes`.
+/// Resolve `target` (`<project>:<task>`) to where it runs: the host for a
+/// task tagged `hostExecTag`, else the project's first declared workload,
+/// else the host. Refuses tasks tagged `confirmTag`, or depending on one,
+/// without `yes`.
 pub fn resolve(
     projects: &QueryProjectsOutput,
     tasks: &QueryTasksOutput,
@@ -74,7 +76,10 @@ pub fn resolve(
     }
 
     let workloads = declared_workloads(project);
-    let location = if let Some(name) = workloads.k8s.first() {
+    let location = if task.tags.contains(&config.host_exec_tag) {
+        // Acts on the project from outside, with the host's tools.
+        Location::Host
+    } else if let Some(name) = workloads.k8s.first() {
         Location::Kubernetes(name.clone())
     } else if let Some(name) = workloads.compose.first() {
         Location::Compose(name.clone())
@@ -374,6 +379,49 @@ mod tests {
             target,
             yes,
         )
+    }
+
+    #[test]
+    fn host_tagged_tasks_run_on_the_host() {
+        let (mut projects, mut tasks) = fixture();
+
+        projects
+            .projects
+            .iter_mut()
+            .find(|p| p.id == "api")
+            .unwrap()
+            .config
+            .project = Some(QueryProjectMetadata {
+            metadata: serde_json::from_str(r#"{ "tilt": { "workloads": { "k8s": ["api"] } } }"#)
+                .unwrap(),
+        });
+        add_task(&mut tasks, "api:rollout-env", &[], &["tilt-exec-host"]);
+        add_task(
+            &mut tasks,
+            "api:both",
+            &[],
+            &["tilt-exec", "tilt-exec-host"],
+        );
+        add_task(&mut tasks, "api:migrate", &[], &["tilt-exec"]);
+        add_task(
+            &mut tasks,
+            "api:reset",
+            &[],
+            &["tilt-exec-host", "tilt-confirm"],
+        );
+
+        let location = |target: &str| {
+            resolve_target(&projects, &tasks, target, true)
+                .unwrap()
+                .location
+        };
+
+        // Workloads or not, and with both tags.
+        assert_eq!(location("api:rollout-env"), Location::Host);
+        assert_eq!(location("api:both"), Location::Host);
+        assert_eq!(location("api:migrate"), Location::Kubernetes("api".into()));
+        // Confirmation still applies.
+        assert!(resolve_target(&projects, &tasks, "api:reset", false).is_err());
     }
 
     #[test]

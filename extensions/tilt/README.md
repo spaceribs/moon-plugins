@@ -324,6 +324,7 @@ tasks:
 Both buttons appear on the `api` resource. `Apply database migrations` runs `moon run api:db-migrate -- <flags>` in a running pod of `api`. `db-reset` asks for confirmation first, then runs `moon run api:db-reset -- --noinput`, while `moon run api:db-reset` on the host still prompts.
 
 - **Where:** a project's buttons go on its first declared workload (Kubernetes before Compose), else its first local resource, else Tilt's top navigation bar.
+- **Host actions:** tag a task `tilt-exec-host` instead (`hostExecTag`) when it acts on a containerized project from outside, such as patching its Deployment and waiting for the rollout, sending fixture requests through the ingress, or reading a queue emulator with a cloud SDK. It gets the same button, settings, and confirmation, but runs on the host, from the workspace root, with your own CLIs, kubeconfig, and credentials. A task with both tags runs on the host. As a tag, it can come from a shared task file (`.moon/tasks/`) for every project that inherits the task.
 - **How:** each button runs [`moon ext tilt -- exec <project>:<task>`](#running-a-task-where-tilt-runs-it), which asks the running Tilt where the workload is when you click. Renamed resources, Helm releases, and namespaces all work, and no shell is involved, so buttons work on Windows too.
 - **Label:** `buttons.<task>.text`, else the task's `description`, else its ID. `icon` is a [Material icon](https://fonts.google.com/icons) name.
 - **Confirmation lives on the task**, so `moon query tasks` shows which tasks are destructive. `exec` refuses a `tilt-confirm` task without `--yes`, so scripts and agents get the same safeguard as Tilt's UI.
@@ -361,7 +362,7 @@ tasks:
 - **Names** are letters, digits, and underscores, not starting with a digit. `MOON_TILT_ARGS` is reserved for the button's input.
 - **On Windows hosts**, moon's default shell isn't POSIX, so `$FLUSH_FLAGS` doesn't expand the same way in a host task's command. The variable is still set.
 
-`project.tilt.buttons` settings for a task that doesn't exist, or isn't tagged `tilt-exec`, fail generation. The tags can be renamed with `execTag` and `confirmTag`. Buttons need Tilt's [`uibutton`](https://github.com/tilt-dev/tilt-extensions/tree/master/uibutton) extension, which is fetched from GitHub when the Tiltfile loads.
+`project.tilt.buttons` settings for a task that doesn't exist, or isn't tagged `tilt-exec` or `tilt-exec-host`, fail generation. The tags can be renamed with `execTag`, `hostExecTag`, and `confirmTag`. Buttons need Tilt's [`uibutton`](https://github.com/tilt-dev/tilt-extensions/tree/master/uibutton) extension, which is fetched from GitHub when the Tiltfile loads.
 
 ### Running a task where Tilt runs it
 
@@ -376,7 +377,7 @@ moon ext tilt -- exec api:seed --env FLUSH_FLAGS=--noinput   # for the task and 
 
 - **Kubernetes workload:** it asks the running Tilt for the workload's pods and runs `kubectl exec` in a running one, using Tilt's kubeconfig and context, so it reaches the cluster Tilt deploys to. The pod's default container is used. Needs `kubectl` on PATH.
 - **Compose workload:** it asks Tilt for the service's container and runs `docker exec` in it. Needs `docker` (`dockerBin`).
-- **No workloads:** it runs `moon run` on the host, from the workspace root, whether or not Tilt is running.
+- **No workloads, or tagged `tilt-exec-host`:** it runs `moon run` on the host, from the workspace root, whether or not Tilt is running.
 - **Args:** args after `--` go to the task first. Then, if `MOON_TILT_ARGS` is set (a button's input sets it), its value is split into words and passed after them, the same way on every platform: quotes group, backslashes escape, and nothing is expanded. So a button's `argv` comes before what you type into its input.
 - **Environment:** each `--env KEY=VALUE` (repeatable) is set for the task and its task dependencies, and nothing else running in the workload. On Kubernetes it runs `kubectl exec … -- env KEY=VALUE moon run …`, so the container needs an `env` executable, as any image with a shell has. On Compose it's `docker exec -e KEY=VALUE`, and on the host it's `moon run`'s environment.
 - **Errors:** it fails, naming the workload, when Tilt isn't running (on `TILT_PORT`) or the workload has no running pod or container. The task's exit code fails the command.
@@ -738,6 +739,7 @@ In `.moon/extensions.yml`, next to `plugin`:
 | --- | --- | --- |
 | `tag` | `"tilt"` | Tag that exposes tasks, or projects whose persistent tasks are exposed. |
 | `execTag` | `"tilt-exec"` | Tag that gives a task a Tilt button running it where its project runs. See [Exec buttons](#exec-buttons). |
+| `hostExecTag` | `"tilt-exec-host"` | Tag that gives a task a Tilt button running it on the host, even in a project with declared workloads. See [Exec buttons](#exec-buttons). |
 | `confirmTag` | `"tilt-confirm"` | Tag that marks a task destructive: its button asks for confirmation, and `exec` requires `--yes`. |
 | `includePersistent` | `false` | Expose every persistent task, regardless of tags. |
 | `linkProjectDependencies` | `true` | Link services to upstream services through moon's project graph. |
