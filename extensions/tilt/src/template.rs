@@ -69,6 +69,8 @@ pub struct TemplateContext<'a> {
     pub watch_config: bool,
     /// Whether to accept project IDs as Tilt args (`selectByProject`).
     pub select_by_project: bool,
+    /// Project IDs or resource names added to every non-empty selection.
+    pub always_select: &'a [String],
     /// moon tasks exposed as Tilt resources.
     pub resources: &'a [crate::tiltfile::Resource],
     /// Every project in the workspace.

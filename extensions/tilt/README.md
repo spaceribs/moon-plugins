@@ -220,6 +220,16 @@ project:
 
 Selecting projects disables everything not selected, including resources from your own `Tiltfile`. Name them alongside projects (`tilt args -- web my-db`), or list them in a project's `project.tilt.resources` so that project brings them up.
 
+**Infrastructure that always runs.** Some workspace infrastructure should run whatever else is selected, though no project depends on it: an observability stack, or a shared ingress's dashboards. List it in the workspace setting `alwaysSelect` instead of adding a fake `project.tilt.dependsOn` to every project:
+
+```yaml
+# .moon/extensions.yml
+tilt:
+  alwaysSelect: ["observability"]   # project IDs or resource names
+```
+
+Every non-empty selection then includes `observability`'s own selection (its workloads, `project.tilt.resources`, and runtime dependencies), so `moon ext tilt -- up api` runs `api` and the observability stack. An entry that isn't a project ID is a resource name. With nothing selected, everything still runs. A name no Tiltfile defines makes Tilt reject the whole Tiltfile whenever something is selected (`You specified some resources that could not be found`), and `generate --load` doesn't select anything, so check a new entry with `tilt alpha tiltfile-result -- <project>`.
+
 `up` and `focus` talk to the instance on `TILT_PORT`/`TILT_HOST` (default `localhost:10350`), like every `tilt` command. If your own Tiltfile already defines Tiltfile args with `config.parse()`, set `selectByProject: false`.
 
 ### Workloads your Tiltfiles deploy
@@ -696,6 +706,7 @@ Every section gets the same variables. The `image` section also gets `image`, th
 | `project_tiltfiles` | Workspace-relative project Tiltfiles to include. |
 | `resources` | Resources: `target`, `project`, `task`, `persistent`, `cmd`, `watch`, `only_inputs`, `ignore`, `respect_gitignore`, `resource_deps`, `labels`, `env`. |
 | `projects` | Every project: `id`, `source`, `tags`, `dependencies` (`id`, `scope`), `tiltfile` (if included), `resources` (targets and workload names), `selection` (what its ID selects), `labels` (what its workloads are labelled, and [`moon_labels()`](#labelling-a-projects-other-resources) returns). |
+| `always_select` | `alwaysSelect`: project IDs or resource names added to every non-empty selection. |
 | `gitignore` | Ignore patterns translated from `.gitignore` files (rendered as `_MOON_GITIGNORE`). |
 | `gitignore_exceptions` | `!` patterns re-including gitignored paths that must stay watched. |
 | `images` | Images: `project`, `image_ref`, `dockerfile`, `command`, `watch`, `ignore`, `live_update` (`fall_back_on`, `syncs` with `local`/`remote`, `restart_entrypoint`, `restart_container`, `run` (a string or a list), or none). |
@@ -738,6 +749,7 @@ In `.moon/extensions.yml`, next to `plugin`:
 | `globalGitignore` | `true` | Apply gitignore patterns to every Tilt resource (`watch_settings`), keeping paths moon needs watched. |
 | `includeProjectTiltfiles` | `true` | `include()` each project's own `Tiltfile` from the generated file. |
 | `selectByProject` | `true` | Accept moon project IDs as Tiltfile args (`tilt up -- web`), and `--to-edit`. |
+| `alwaysSelect` | `[]` | Project IDs or resource names added to every non-empty selection, such as an observability stack. See [infrastructure that always runs](#one-tilt-instance-selected-by-project). |
 | `sync` | `true` | Regenerate during moon's workspace sync (`moon sync`, before `moon run`). |
 | `watchConfig` | `true` | Regenerate from a `(moon)` resource when moon config changes while Tilt runs. |
 | `outputDir` | `".moon/tilt"` | Directory the generated Tiltfiles are written to (workspace-relative). It ignores itself. |

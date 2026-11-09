@@ -468,6 +468,10 @@ fn render_generated(root: &VirtualPath, config: &TiltExtensionConfig) -> AnyResu
         return Err(anyhow!(error));
     }
 
+    if let Some(error) = tiltfile::always_select_error(config) {
+        return Err(anyhow!(error));
+    }
+
     let section_templates = load_section_templates(root, config)?;
     let projects: QueryProjectsOutput = query_moon(root, config, "projects")?;
 
