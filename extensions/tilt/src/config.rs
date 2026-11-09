@@ -104,6 +104,11 @@ pub struct TiltExtensionConfig {
     /// defines Tiltfile args.
     pub select_by_project: bool,
 
+    /// Project IDs or resource names added to every non-empty selection,
+    /// with what they select themselves: infrastructure such as an
+    /// observability stack that should run whatever else runs.
+    pub always_select: Vec<String>,
+
     /// When to restart services. Override per project with
     /// `project.metadata.tilt.serviceRestart` in moon.yml.
     pub service_restart: ServiceRestart,
@@ -165,6 +170,7 @@ impl Default for TiltExtensionConfig {
             live_update: true,
             image_workdir: "/app".into(),
             select_by_project: true,
+            always_select: vec![],
             service_restart: ServiceRestart::default(),
             workload_labels: WorkloadLabels::default(),
             template_dir: None,

@@ -15,6 +15,15 @@ _moon_enabled = []
 
 for _moon_name in _moon_cfg.get("to-run", []):
     _moon_enabled += _MOON_PROJECTS.get(_moon_name, [_moon_name])
+{%- if always_select %}
+
+# Selected with anything else (alwaysSelect): project IDs or resource names.
+_MOON_ALWAYS = {{ always_select | starlark }}
+
+if _moon_enabled:
+    for _moon_name in _MOON_ALWAYS:
+        _moon_enabled += _MOON_PROJECTS.get(_moon_name, [_moon_name])
+{%- endif %}
 {%- if watch_config and config_files %}
 
 # Keep regenerating whatever is selected.

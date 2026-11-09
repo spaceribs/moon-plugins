@@ -123,6 +123,7 @@ Terms this repo introduced. Where a term reuses a moon or Tilt word, it's narrow
 | **select** | Enable a project's resources in the one Tilt instance, by project ID, and disable everything else. `up` adds to the selection, `focus` replaces it. |
 | **selection** | The resources a project ID enables: its own resources, its declared workloads, its `project.tilt.resources`, and the services, workloads, and `project.tilt.resources` of its runtime dependencies. |
 | **`project.tilt.resources`** | Names of resources a project's own Tiltfile defines, so its ID selects them. Not the `resources` template variable, which holds only exposed tasks. |
+| **always selected** | A project ID or resource name in `alwaysSelect`, added to every non-empty selection: infrastructure that runs whatever else is selected. |
 | **reapply marker** | The throwaway `(reapply)` Tiltfile arg `up`/`focus` pass first, so Tilt re-applies an unchanged selection. |
 | **edit** | Build a project's image from source rather than use the published image: `--edit api,web`, `--edit-affected`, rendered as the `--to-edit` Tiltfile arg. |
 
