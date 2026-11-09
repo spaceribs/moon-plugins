@@ -11,7 +11,7 @@
 ## 2. Verification
 
 - [x] 2.1 With real moon 2.6.2 and Tilt 0.37 on a scratch copy of `examples/tilt-demo`, give a Compose-containerized project a `tilt-exec-host` task that prints its hostname and a `tilt-exec` task that does the same. Verify both buttons sit on the workload, the host one runs on the host and the other in the container, when clicked in Tilt's UI
-- [ ] 2.2 Run `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, the workspace tests (after building the release `.wasm` files), and `openspec validate --all --strict`, and verify they pass
+- [x] 2.2 Run `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, the workspace tests (after building the release `.wasm` files), and `openspec validate --all --strict`, and verify they pass
 
 ## Workflow follow-up
 

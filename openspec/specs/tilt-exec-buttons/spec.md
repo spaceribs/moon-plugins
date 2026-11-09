@@ -32,7 +32,7 @@ A project's buttons SHALL attach to its first declared workload (Kubernetes befo
 - **THEN** the button appears in Tilt's navigation bar
 
 ### Requirement: exec runs the task in the project's workload
-`moon ext tilt -- exec <project>:<task>` SHALL run `moon run <project>:<task>` inside the project's first declared workload, as the running Tilt instance deployed it: in a running pod of a Kubernetes workload, or in the container of a Compose service. It MUST fail, naming the workload, when Tilt isn't running or the workload has no running pod or container.
+`moon ext tilt -- exec <project>:<task>` SHALL run `moon run <project>:<task>` inside the project's first declared workload, as the running Tilt instance deployed it, for a task not tagged with `hostExecTag`: in a running pod of a Kubernetes workload, or in the container of a Compose service. It MUST fail, naming the workload, when Tilt isn't running or the workload has no running pod or container.
 
 #### Scenario: Kubernetes workload
 - **WHEN** Tilt runs `api`'s `api` workload and the user runs `moon ext tilt -- exec api:db-migrate`
@@ -52,6 +52,21 @@ For a project without declared workloads, `exec` SHALL run `moon run <project>:<
 #### Scenario: Host task
 - **WHEN** `web` declares no workloads and the user runs `moon ext tilt -- exec web:seed`
 - **THEN** `moon run web:seed` runs on the host
+
+### Requirement: Host exec tag
+Each task tagged with `hostExecTag` (default `tilt-exec-host`) SHALL get a button as a task tagged with `execTag` does: attached to where its project runs, with the same confirmation and `project.tilt.buttons` settings. `exec` SHALL run such a task on the host, from the workspace root, whether or not its project declares workloads and whether or not Tilt is running. A task tagged with both tags SHALL run on the host.
+
+#### Scenario: Host action on a containerized project
+- **WHEN** `api` declares `workloads: { k8s: ["api"] }` and its task `api:rollout-env` is tagged `tilt-exec-host`
+- **THEN** the generated Tiltfile has an `api:rollout-env` button on the `api` resource, and clicking it runs `moon run api:rollout-env` on the host, not in the `api` pod
+
+#### Scenario: Host tag from a terminal
+- **WHEN** the user runs `moon ext tilt -- exec api:rollout-env` while Tilt isn't running
+- **THEN** `moon run api:rollout-env` runs on the host
+
+#### Scenario: Both tags
+- **WHEN** a task of a containerized project is tagged `tilt-exec` and `tilt-exec-host`
+- **THEN** it gets one button, and `exec` runs it on the host
 
 ### Requirement: Passthrough args
 Arguments after `--` SHALL be passed to the task after `--`. A button whose `project.tilt.buttons.<task>.args` is set SHALL show a text input, labelled with that value, whose contents are split into arguments the same way on every platform and passed after any arguments that follow `--`.
@@ -160,15 +175,19 @@ A button's label SHALL be `project.tilt.buttons.<task>.text`, else the task's `d
 - **THEN** the button is labelled `Migrate` with the `storage` icon
 
 ### Requirement: Invalid button settings fail generation
-Generation SHALL fail, naming the project and the setting, when `project.tilt.buttons` isn't an object of objects, an entry has a key other than `text`, `icon`, `args`, `argv`, or `env`, a value breaks the rules for button setting values, or an entry names a task the project doesn't have or that isn't tagged with `execTag`.
+Generation SHALL fail, naming the project and the setting, when `project.tilt.buttons` isn't an object of objects, an entry has a key other than `text`, `icon`, `args`, `argv`, or `env`, a value breaks the rules for button setting values, or an entry names a task the project doesn't have or that isn't tagged with `execTag` or `hostExecTag`.
 
 #### Scenario: Settings for an untagged task
-- **WHEN** `project.tilt.buttons.db-migrate` is set but `api:db-migrate` isn't tagged `tilt-exec`
+- **WHEN** `project.tilt.buttons.db-migrate` is set but `api:db-migrate` isn't tagged `tilt-exec` or `tilt-exec-host`
 - **THEN** generation fails, naming `api` and `db-migrate`
 
 #### Scenario: Unknown key
 - **WHEN** `project.tilt.buttons.db-migrate` is `{ confirm: true }`
 - **THEN** generation fails, naming `api` and `confirm`
+
+#### Scenario: Settings for a host button
+- **WHEN** `project.tilt.buttons.rollout-env` is `{ text: "Roll out env" }` and `api:rollout-env` is tagged only `tilt-exec-host`
+- **THEN** generation succeeds and the button is labelled `Roll out env`
 
 ### Requirement: Button setting values
 In `project.tilt.buttons.<task>`, `text`, `icon`, and `args` SHALL be non-empty strings, `argv` a non-empty list of strings, and `env` a non-empty object of strings whose names are letters, digits, and underscores, not starting with a digit, and not `MOON_TILT_ARGS`. Any other value fails generation.

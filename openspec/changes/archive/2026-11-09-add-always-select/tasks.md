@@ -9,7 +9,7 @@
 ## 2. Verification
 
 - [x] 2.1 With real moon 2.6.2 and Tilt 0.37 on a scratch copy of `examples/tilt-demo`, set `alwaysSelect` to `["docs"]` (which has its own Tiltfile resource). Verify with `tilt alpha tiltfile-result -- web` (or a running Tilt and `moon ext tilt -- up web`) that `docs` is enabled with `web`, that no args still enables everything, and what an unknown resource name in `alwaysSelect` does. Observed: `web` plus `docs` with the setting, `docs` disabled without it, everything with no args, and an unknown name fails loading with exit 5 (`You specified some resources that could not be found`) only when something is selected
-- [ ] 2.2 Run `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, the workspace tests (after building the release `.wasm` files), and `openspec validate --all --strict`, and verify they pass
+- [x] 2.2 Run `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, the workspace tests (after building the release `.wasm` files), and `openspec validate --all --strict`, and verify they pass
 
 ## Workflow follow-up
 
