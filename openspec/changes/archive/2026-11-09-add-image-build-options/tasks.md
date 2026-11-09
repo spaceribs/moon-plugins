@@ -9,7 +9,7 @@
 ## 2. Verification
 
 - [x] 2.1 With real Docker (BuildKit) and the generated command, build a scratch project whose Dockerfile has a `RUN --mount=type=ssh` step checking the agent socket, a `RUN --mount=type=secret` step reading the secret, an `ARG` printed by a step, and two stages. Verify the build succeeds with an `ssh-agent` running and `imageBuild` set, and fails at the SSH step without it. If Tilt can build here, also verify through `tilt ci` or `tilt up`
-- [ ] 2.2 Run `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, the workspace tests (after building the release `.wasm` files), and `openspec validate --all --strict`, and verify they pass
+- [x] 2.2 Run `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, the workspace tests (after building the release `.wasm` files), and `openspec validate --all --strict`, and verify they pass
 
 ## Workflow follow-up
 
