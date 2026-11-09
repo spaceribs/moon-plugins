@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.0](https://github.com/spaceribs/moon-plugins/compare/tilt_extension-v0.7.0...tilt_extension-v0.8.0) - 2026-11-09
+
+### Added
+
+- *(tilt)* add a host exec tag for buttons that run on the host
+- *(tilt)* add alwaysSelect for infrastructure selected with every project
+- *(tilt)* add imageBuild options for image builds
+
+### Other
+
+- *(tilt)* document Dockerfile-specific .dockerignore files
+
 ## [0.7.0](https://github.com/spaceribs/moon-plugins/compare/tilt_extension-v0.6.2...tilt_extension-v0.7.0) - 2026-10-23
 
 ### Added
