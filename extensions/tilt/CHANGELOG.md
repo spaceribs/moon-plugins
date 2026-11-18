@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.0](https://github.com/spaceribs/moon-plugins/compare/tilt_extension-v0.8.0...tilt_extension-v0.9.0) - 2026-11-18
+
+### Added
+
+- *(tilt)* place exec buttons on a project's tilt resources before the nav bar
+
 ## [0.8.0](https://github.com/spaceribs/moon-plugins/compare/tilt_extension-v0.7.0...tilt_extension-v0.8.0) - 2026-11-09
 
 ### Added
