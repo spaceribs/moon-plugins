@@ -17,7 +17,7 @@ Each task tagged with `execTag` (default `tilt-exec`) SHALL get a Tilt button na
 - **THEN** the generated Tiltfile defines no buttons and doesn't load Tilt's button extension
 
 ### Requirement: Buttons attach to where the project runs
-A project's buttons SHALL attach to its first declared workload (Kubernetes before Compose, as declared), or, without workloads, to its first planned local resource. A project with neither SHALL get its buttons in Tilt's top navigation bar.
+A project's buttons SHALL attach to its first declared workload (Kubernetes before Compose, as declared), or, without workloads, to its first planned local resource, or, without either, to the first entry of its `project.tilt.resources`. A project with none of these SHALL get its buttons in Tilt's top navigation bar.
 
 #### Scenario: Containerized project
 - **WHEN** `api` declares `workloads: { k8s: ["api", "api-worker"] }` and has a `tilt-exec` task
@@ -27,8 +27,12 @@ A project's buttons SHALL attach to its first declared workload (Kubernetes befo
 - **WHEN** `web` declares no workloads, has local resources `web:codegen` and `web:dev`, and has a `tilt-exec` task
 - **THEN** the button appears on `web:codegen`
 
+#### Scenario: Project with only its own Tiltfile's resources
+- **WHEN** `fn` declares no workloads, has no planned local resources, declares `resources: ["fn"]`, and has a `tilt-exec-host` task
+- **THEN** the button appears on the `fn` resource
+
 #### Scenario: Project with nothing in Tilt
-- **WHEN** `tooling` has a `tilt-exec` task but no workloads or local resources
+- **WHEN** `tooling` has a `tilt-exec` task but no workloads, local resources, or `project.tilt.resources`
 - **THEN** the button appears in Tilt's navigation bar
 
 ### Requirement: exec runs the task in the project's workload
