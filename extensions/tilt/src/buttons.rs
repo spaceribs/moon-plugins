@@ -25,8 +25,8 @@ pub struct Button {
     /// Material icon name, if set.
     pub icon: Option<String>,
     /// Resource the button appears on: the project's first declared
-    /// workload, else its first local resource. `None` puts it in Tilt's
-    /// navigation bar.
+    /// workload, else its first local resource, else the first entry of its
+    /// `project.tilt.resources`. `None` puts it in Tilt's navigation bar.
     pub resource: Option<String>,
     /// Ask for confirmation in Tilt's UI: the task, or a task dependency, is
     /// tagged `confirmTag`.
@@ -43,6 +43,18 @@ pub struct Button {
     /// once Tilt has confirmed, `--env KEY=VALUE` per variable, then
     /// `-- <argv>`.
     pub command: Vec<String>,
+}
+
+/// The first entry of `project.tilt.resources`: a resource defined in a
+/// Tiltfile, which Tilt requires to exist for the selection to load.
+fn first_extra_resource(project: &QueryProject) -> Option<String> {
+    project
+        .config
+        .tilt_metadata()?
+        .get("resources")?
+        .as_array()?
+        .iter()
+        .find_map(|value| value.as_str().map(String::from))
 }
 
 /// A button for each task tagged `execTag`, attached to where its project
@@ -69,7 +81,8 @@ pub fn plan_buttons(
                     .iter()
                     .find(|resource| resource.project == project.id)
                     .map(|resource| resource.target.clone())
-            });
+            })
+            .or_else(|| first_extra_resource(project));
 
         for (task_id, task) in project_tasks {
             if !has_button(task, config) {
@@ -392,11 +405,15 @@ mod tests {
 
         tag(&mut tasks, "api", "build", &["tilt-exec"]);
         tag(&mut tasks, "api-client", "build", &["tilt-exec"]);
+        tag(&mut tasks, "web", "lint", &["tilt-exec-host"]);
         set_tilt(
             &mut projects,
             "api",
             r#"{ "workloads": { "compose": ["api-cache"], "k8s": ["api", "api-worker"] } }"#,
         );
+        // web has a planned local resource; its own Tiltfile's resources
+        // only count without one.
+        set_tilt(&mut projects, "web", r#"{ "resources": ["web-site"] }"#);
         let buttons = planned(&projects, &tasks);
         let resource = |target: &str| {
             buttons
@@ -409,8 +426,24 @@ mod tests {
 
         // Kubernetes first, in declared order.
         assert_eq!(resource("api:build"), Some("api".into()));
+        // A planned local resource comes before `project.tilt.resources`.
+        assert_eq!(resource("web:lint"), Some("web:codegen".into()));
         // Nothing of api-client's runs in Tilt.
         assert_eq!(resource("api-client:build"), None);
+
+        // With only `project.tilt.resources`, the first entry.
+        set_tilt(
+            &mut projects,
+            "api-client",
+            r#"{ "resources": ["fn", "fn-emulator"] }"#,
+        );
+        let buttons = planned(&projects, &tasks);
+        let fn_button = buttons
+            .iter()
+            .find(|button| button.target == "api-client:build")
+            .unwrap();
+
+        assert_eq!(fn_button.resource.as_deref(), Some("fn"));
     }
 
     #[test]

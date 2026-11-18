@@ -323,7 +323,7 @@ tasks:
 
 Both buttons appear on the `api` resource. `Apply database migrations` runs `moon run api:db-migrate -- <flags>` in a running pod of `api`. `db-reset` asks for confirmation first, then runs `moon run api:db-reset -- --noinput`, while `moon run api:db-reset` on the host still prompts.
 
-- **Where:** a project's buttons go on its first declared workload (Kubernetes before Compose), else its first local resource, else Tilt's top navigation bar.
+- **Where:** a project's buttons go on its first declared workload (Kubernetes before Compose), else its first local resource, else the first entry of its `project.tilt.resources` (such as a `local_resource` in its own Tiltfile), else Tilt's top navigation bar.
 - **Host actions:** tag a task `tilt-exec-host` instead (`hostExecTag`) when it acts on a containerized project from outside, such as patching its Deployment and waiting for the rollout, sending fixture requests through the ingress, or reading a queue emulator with a cloud SDK. It gets the same button, settings, and confirmation, but runs on the host, from the workspace root, with your own CLIs, kubeconfig, and credentials. A task with both tags runs on the host. As a tag, it can come from a shared task file (`.moon/tasks/`) for every project that inherits the task.
 - **How:** each button runs [`moon ext tilt -- exec <project>:<task>`](#running-a-task-where-tilt-runs-it), which asks the running Tilt where the workload is when you click. Renamed resources, Helm releases, and namespaces all work, and no shell is involved, so buttons work on Windows too.
 - **Label:** `buttons.<task>.text`, else the task's `description`, else its ID. `icon` is a [Material icon](https://fonts.google.com/icons) name.
